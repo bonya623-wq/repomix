@@ -1195,6 +1195,8 @@ async def run_price_check_menu(context, games):
 
         logger.info(f"price_check: [{game_name}] завершено")
 
+    logger.info("Проверка цен завершена!")
+
 
 async def main():
     config = load_config()

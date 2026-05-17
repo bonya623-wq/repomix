@@ -5,11 +5,8 @@
 import asyncio
 import json
 import logging
-import re as _re
 from pathlib import Path
 from playwright.async_api import Page, BrowserContext
-
-import aiohttp
 
 logger = logging.getLogger("price_checker")
 
@@ -20,20 +17,6 @@ RAID_LOTS_URL        = "https://funpay.com/en/lots/566/"
 WOW_LOTS_URL         = "https://funpay.com/en/lots/492/"
 PRICE_DIFF_THRESHOLD = 15.0
 BASE                 = "https://www.g2g.com"
-
-_FP_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept-Language": "en-US,en;q=0.9",
-}
-
-# Пауза между HTTP-запросами к страницам листинга (защита от 429)
-_LISTING_PAGE_DELAY  = 2.0
-# Пауза перед браузерным fallback-визитом на индивидуальный лот
-_BROWSER_VISIT_DELAY = 3.0
 
 
 def load_pairs() -> dict:
@@ -64,82 +47,8 @@ def _extract_price_digits(text: str) -> float:
         return 0.0
 
 
-async def _fetch_all_listing_prices(lots_url: str) -> dict[str, float]:
-    """
-    Загружает все страницы листинга FunPay через HTTP (без браузера).
-    Возвращает {lot_id: price}. Намного быстрее чем 305 отдельных визитов.
-    """
-    prices: dict[str, float] = {}
-
-    async with aiohttp.ClientSession(headers=_FP_HEADERS) as session:
-        for page_num in range(1, 50):  # макс 50 страниц
-            url = lots_url if page_num == 1 else f"{lots_url}?page={page_num}"
-            try:
-                async with session.get(
-                    url,
-                    timeout=aiohttp.ClientTimeout(total=20),
-                    allow_redirects=True,
-                ) as resp:
-                    if resp.status != 200:
-                        logger.warning(f"  Листинг стр.{page_num}: HTTP {resp.status}")
-                        break
-                    html = await resp.text(errors="ignore")
-            except Exception as e:
-                logger.warning(f"  Листинг стр.{page_num}: {e}")
-                break
-
-            # Разбиваем на блоки по tc-item, ищем lot_id + цену в каждом
-            chunks = html.split("tc-item")
-            found_this_page = 0
-            for chunk in chunks[1:]:
-                m_id = _re.search(r'offer\?id=(\d+)', chunk)
-                if not m_id:
-                    continue
-
-                price = 0.0
-
-                # Ищем цену только внутри блока tc-price (не во всём chunk —
-                # иначе data-s самого a.tc-item содержит ID лота, а не цену)
-                tc_pos = chunk.find("tc-price")
-                if tc_pos >= 0:
-                    price_region = chunk[tc_pos:tc_pos + 300]
-
-                    # Способ 1: data-s атрибут внутри tc-price
-                    m_pr = _re.search(r'data-s="([\d.]+)"', price_region)
-                    if m_pr:
-                        try:
-                            price = float(m_pr.group(1))
-                        except ValueError:
-                            pass
-
-                    # Способ 2: текст внутри tc-price
-                    if not price:
-                        m_pr2 = _re.search(r'tc-price[^>]*>(.*?)</div>', price_region, _re.DOTALL)
-                        if m_pr2:
-                            m_num = _re.search(r'(\d+\.\d{2})', m_pr2.group(1))
-                            if m_num:
-                                try:
-                                    price = float(m_num.group(1))
-                                except ValueError:
-                                    pass
-
-                # Санитарная проверка: реальные цены аккаунтов в пределах $0.5–$9999
-                if 0.5 <= price <= 9999.0:
-                    prices[m_id.group(1)] = price
-                    found_this_page += 1
-
-            logger.info(f"  Листинг стр.{page_num}: +{found_this_page} цен ({len(prices)} всего)")
-
-            if found_this_page == 0:
-                break  # больше страниц нет
-
-            await asyncio.sleep(_LISTING_PAGE_DELAY)
-
-    return prices
-
-
 async def _safe_goto(page: Page, url: str, retries: int = 3) -> bool:
-    """page.goto с повтором при сетевых ошибках."""
+    """page.goto с повтором при сетевых ошибках (ERR_CONNECTION_*, timeout)."""
     for attempt in range(retries):
         try:
             await page.goto(url, wait_until="domcontentloaded", timeout=40000)
@@ -159,47 +68,81 @@ async def _safe_goto(page: Page, url: str, retries: int = 3) -> bool:
 
 
 async def get_funpay_price(page: Page, funpay_url: str,
-                           lots_url: str = WOW_LOTS_URL,
-                           cached_prices: dict | None = None) -> float:
+                           lots_url: str = "https://funpay.com/en/lots/492/") -> float:
     """
-    Возвращает цену лота FunPay.
-    Сначала проверяет кеш листинга (быстро, без запроса).
-    Если нет — открывает страницу лота напрямую (браузерный fallback).
+    Парсит цену лота FunPay.
+    1) Сначала ищет на листинге по lot_id (как в основном скрапере)
+    2) Если не нашёл — открывает страницу лота напрямую (fallback)
     Возвращает -1.0 если лот продан.
     """
     if "id=" not in funpay_url:
         return 0.0
     lot_id = funpay_url.split("id=")[-1].split("&")[0]
 
-    # ── Способ 1: кеш листинга (без запроса) ──────────────────────────────
-    if cached_prices is not None and lot_id in cached_prices:
-        price = cached_prices[lot_id]
-        logger.info(f"  Цена с листинга: ${price:.2f}")
-        return price
+    # ── Способ 1: листинг ─────────────────────────────────────────────────
+    try:
+        await _safe_goto(page, lots_url)
+        await asyncio.sleep(2)
 
-    # ── Способ 2: индивидуальная страница лота (браузер, медленно) ─────────
-    logger.info(f"  Лот {lot_id} не на листинге → проверяем страницу лота")
-    await asyncio.sleep(_BROWSER_VISIT_DELAY)
+        result = await page.evaluate(f"""
+            () => {{
+                const items = document.querySelectorAll('a.tc-item');
+                for (const item of items) {{
+                    const href = item.getAttribute('href') || '';
+                    if (href.includes('id={lot_id}')) {{
+                        const el = item.querySelector('.tc-price');
+                        if (el) {{
+                            // 1) data-s атрибут
+                            const ds = el.getAttribute('data-s');
+                            if (ds) return ds;
+                            // 2) текст элемента
+                            return (el.innerText || el.textContent || '').trim();
+                        }}
+                    }}
+                }}
+                return null;
+            }}
+        """)
 
+        if result:
+            price = _extract_price_digits(str(result))
+            if price > 0:
+                logger.info(f"  Цена с листинга: ${price:.2f}")
+                return price
+    except Exception as e:
+        logger.warning(f"  Ошибка листинга: {e}")
+
+    # ── Способ 2: индивидуальная страница лота ────────────────────────────
     try:
         await _safe_goto(page, funpay_url)
         await asyncio.sleep(2)
 
+        # Проверяем что лот не продан
         content = await page.content()
         for marker in ["Offer not found", "offer has expired", "been deleted",
                        "never existed", "Предложение не найдено"]:
             if marker.lower() in content.lower():
                 return -1.0
 
+        # Парсим цену со страницы лота — пробуем все возможные места
         result = await page.evaluate("""
             () => {
+                // 1) Самый надёжный путь — .tc-price с data-s (актуально для FunPay)
                 for (const el of document.querySelectorAll('.tc-price')) {
                     const ds = el.getAttribute('data-s');
-                    if (ds) { const v = parseFloat(ds); if (v > 0.5 && v < 100000) return ds; }
+                    if (ds) {
+                        const v = parseFloat(ds);
+                        if (v > 0.5 && v < 100000) return ds;
+                    }
                     const text = (el.innerText || el.textContent || '').trim();
                     const m = text.match(/(\\d+(?:[.,]\\d{1,2})?)/);
-                    if (m) { const v = parseFloat(m[1].replace(',', '.')); if (v > 0.5 && v < 100000) return m[1]; }
+                    if (m) {
+                        const v = parseFloat(m[1].replace(',', '.'));
+                        if (v > 0.5 && v < 100000) return m[1];
+                    }
                 }
+
+                // 2) data-s только на элементах с "price" в классе (свой или родителя)
                 for (const el of document.querySelectorAll('[data-s]')) {
                     const cls = ((el.className || '') + ' ' +
                                  (el.parentElement ? el.parentElement.className || '' : '')).toLowerCase();
@@ -208,16 +151,27 @@ async def get_funpay_price(page: Page, funpay_url: str,
                     const v = parseFloat(ds);
                     if (v > 0.5 && v < 100000) return ds;
                 }
+
+                // 3) Кнопки покупки и заголовки — ищем паттерн цены "104.70 $" или "$104.70"
                 const btns = document.querySelectorAll(
                     'button, .btn, .btn-buy, .form-control, h1, h2, h3, strong, span, .payment-method-balance'
                 );
                 for (const el of btns) {
                     const text = (el.innerText || el.textContent || '').trim();
                     if (!text || text.length > 50) continue;
-                    const m = text.match(/(\\d+(?:[.,]\\d{1,2})?)\\s*(?:\\$|USD|usd)/i)
+                    const m = text.match(/(\\d+(?:[.,]\\d{1,2})?)\\s*(?:\\$|USD|usd|руб|RUB)/i)
                           || text.match(/[\\$]\\s*(\\d+(?:[.,]\\d{1,2})?)/);
-                    if (m) { const v = parseFloat(m[1].replace(',', '.')); if (v > 0.5 && v < 100000) return m[1]; }
+                    if (m) {
+                        const v = parseFloat(m[1].replace(',', '.'));
+                        if (v > 0.5 && v < 100000) return m[1];
+                    }
                 }
+
+                // 4) Поиск по всему тексту страницы — берём первую цену в формате X.XX $
+                const body = document.body.innerText || '';
+                const all = body.match(/\\d+(?:[.,]\\d{2})\\s*\\$/g);
+                if (all && all.length > 0) return all[0];
+
                 return null;
             }
         """)
@@ -245,6 +199,7 @@ async def update_g2g_price(page: Page, g2g_id: str, new_price: float) -> bool:
         )
         await asyncio.sleep(3)
 
+        # Вводим G2G ID в поиск
         try:
             await page.wait_for_selector(
                 "input[placeholder='Search title or offer number']", timeout=15000
@@ -263,6 +218,7 @@ async def update_g2g_price(page: Page, g2g_id: str, new_price: float) -> bool:
         await search.fill(g2g_id)
         await asyncio.sleep(4)
 
+        # Ждём загрузки строки
         try:
             await page.wait_for_selector("tbody tr", timeout=8000)
         except Exception:
@@ -270,13 +226,18 @@ async def update_g2g_price(page: Page, g2g_id: str, new_price: float) -> bool:
             return False
         await asyncio.sleep(1)
 
-        price_link = await page.query_selector("tbody tr .q-gutter-xs .base-hyperlink")
+        # Кликаем именно на цену — она внутри div.q-gutter-xs
+        price_link = await page.query_selector(
+            "tbody tr .q-gutter-xs .base-hyperlink"
+        )
         if not price_link:
-            spans = await page.query_selector_all("tbody tr span.base-hyperlink.cursor-pointer")
+            spans = await page.query_selector_all(
+                "tbody tr span.base-hyperlink.cursor-pointer"
+            )
             for span in spans:
                 text = (await span.inner_text()).strip()
-                import re as _re2
-                if _re2.match(r'^\d{2,6}\.\d{2}$', text):
+                import re as _re
+                if _re.match(r'^\d{2,6}\.\d{2}$', text):
                     price_link = span
                     break
         if not price_link:
@@ -287,6 +248,7 @@ async def update_g2g_price(page: Page, g2g_id: str, new_price: float) -> bool:
         logger.info(f"  Нашли цену: '{price_text}' — кликаем")
         await price_link.click()
 
+        # Ждём появления диалога Price setting
         try:
             await page.wait_for_selector(".q-dialog:not(.q-dialog--seamless)", timeout=8000)
             logger.info("  Диалог Price setting открылся")
@@ -295,16 +257,22 @@ async def update_g2g_price(page: Page, g2g_id: str, new_price: float) -> bool:
             return False
         await asyncio.sleep(1)
 
+        # Ищем инпут ВНУТРИ диалога
         price_input = None
-        for sel in [".q-dialog input.q-field__native", ".q-dialog input[type='text']"]:
+        for sel in [
+            ".q-dialog input.q-field__native",
+            ".q-dialog input[type='text']",
+        ]:
             price_input = await page.query_selector(sel)
             if price_input:
+                logger.info(f"  Поле ввода найдено: {sel}")
                 break
 
         if not price_input:
             logger.warning("  Поле ввода цены не найдено в диалоге")
             return False
 
+        # Вводим через JS чтобы обойти backdrop
         price_str = str(round(new_price, 2))
         await page.evaluate("""
             (args) => {
@@ -320,6 +288,7 @@ async def update_g2g_price(page: Page, g2g_id: str, new_price: float) -> bool:
         logger.info(f"  Ввели цену: {price_str}")
         await asyncio.sleep(0.5)
 
+        # Нажимаем Update внутри диалога
         update_btn = None
         for btn in await page.query_selector_all(".q-dialog button"):
             if (await btn.inner_text()).strip() == "Update":
@@ -334,6 +303,7 @@ async def update_g2g_price(page: Page, g2g_id: str, new_price: float) -> bool:
         await page.evaluate("(el) => el.click()", update_btn)
         await asyncio.sleep(3)
 
+        # Нажимаем Ok внутри диалога
         ok_btn = None
         for btn in await page.query_selector_all(".q-dialog button"):
             if (await btn.inner_text()).strip() == "Ok":
@@ -372,19 +342,14 @@ async def run_price_check(context: BrowserContext, tiers: list,
     logger.info(f"{len(pairs)} лотов | порог ${PRICE_DIFF_THRESHOLD:.0f}")
     logger.info(f"{'='*60}\n")
 
-    # ── Шаг 1a: загружаем листинг одним HTTP-запросом ────────────────────
-    logger.info("── Шаг 1a: загружаем листинг FunPay (HTTP, все страницы)...")
-    cached_prices = await _fetch_all_listing_prices(lots_url)
-    logger.info(f"  Итого в кеше: {len(cached_prices)} цен\n")
-
     fp_page  = await context.new_page()
     g2g_page = await context.new_page()
 
     to_update = []
-    migrated = skipped = updated = from_cache = from_browser = 0
+    migrated = skipped = updated = 0
 
-    # ── Шаг 1b: проверяем все цены ───────────────────────────────────────
-    logger.info("── Шаг 1b: сверяем цены...\n")
+    # ── Шаг 1: проверяем все цены на FunPay ─────────────────────────────
+    logger.info("── Шаг 1: проверяем цены на FunPay...\n")
 
     for i, pair in enumerate(pairs):
         fp_id      = pair["funpay_id"]
@@ -395,14 +360,7 @@ async def run_price_check(context: BrowserContext, tiers: list,
 
         logger.info(f"[{i+1}/{len(pairs)}] {title}")
 
-        current_fp = await get_funpay_price(fp_page, funpay_url, lots_url, cached_prices)
-
-        # Статистика источника
-        lot_id = funpay_url.split("id=")[-1].split("&")[0] if "id=" in funpay_url else ""
-        if lot_id in cached_prices:
-            from_cache += 1
-        else:
-            from_browser += 1
+        current_fp = await get_funpay_price(fp_page, funpay_url, lots_url)
 
         if current_fp == -1.0:
             logger.info(f"  Лот продан - пропускаем")
@@ -439,9 +397,7 @@ async def run_price_check(context: BrowserContext, tiers: list,
 
     await fp_page.close()
 
-    logger.info(f"\n  Источник цен: кеш={from_cache} | браузер={from_browser}")
-
-    # ── Шаг 2: обновляем цены на G2G ─────────────────────────────────────
+    # ── Шаг 2: обновляем цены на G2G ────────────────────────────────────
     if to_update:
         logger.info(f"\n── Шаг 2: обновляем {len(to_update)} лотов на G2G...\n")
         for pair, current_fp, new_g2g in to_update:
@@ -468,7 +424,6 @@ async def run_price_check(context: BrowserContext, tiers: list,
     logger.info(f"\n{'='*60}")
     logger.info(f"ГОТОВО | Обновлено: {updated} | Мигрировано: {migrated} | Пропущено: {skipped}")
     logger.info(f"{'='*60}")
-
 
 async def run_price_check_wow(context: BrowserContext, tiers: list, fp_factor: float = 1.0):
     await run_price_check(context, tiers, lots_url=WOW_LOTS_URL, game_name=WOW_GAME_NAME, fp_factor=fp_factor)

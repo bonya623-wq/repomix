@@ -823,21 +823,79 @@ async def _funpay_check_sold(session: aiohttp.ClientSession, funpay_id: str) -> 
         return False
 
 
-async def run_cleanup(g2g: G2GBot, funpay: FunPayScraper):
+async def _check_lot_full(context, funpay_url: str) -> tuple[bool, float]:
     """
-    Логика чистки:
-    1. Проходим по всем парам в lot_pairs.json
-    2. Для каждой делаем HTTP-запрос на FunPay (параллельно, макс 3 одновременно)
-    3. Если видим "Offer not found" — добавляем g2g_id в список на удаление
-    4. После обхода всех лотов — идём на G2G и удаляем их по одному
-    5. Обновляем lot_pairs.json
+    Один визит на страницу лота — возвращает (sold, offline_hours).
+    sold=True           → лот продан/удалён
+    offline_hours=0.0   → продавец онлайн
+    offline_hours=N     → продавец оффлайн N часов
+    offline_hours=-1.0  → статус неизвестен (оставляем лот)
+    offline_hours=999.0 → месяц/год назад
+    """
+    import re as _re
+    page = None
+    try:
+        page = await context.new_page()
+        await page.goto(funpay_url, wait_until="domcontentloaded", timeout=40000)
+        await asyncio.sleep(1.5)
+
+        content = await page.content()
+        for marker in ["Offer not found", "offer has expired", "been deleted",
+                        "never existed", "Предложение не найдено"]:
+            if marker.lower() in content.lower():
+                return True, -1.0
+        title = await page.title()
+        if "not found" in title.lower() or "404" in title:
+            return True, -1.0
+
+        status = await page.evaluate("""
+            () => {
+                const el = document.querySelector('.media-user-status');
+                return el ? el.innerText.trim().toLowerCase() : null;
+            }
+        """)
+
+        if not status:
+            return False, -1.0
+        if "online" in status and "ago" not in status:
+            return False, 0.0
+
+        m = _re.search(r'(\d+)\s+hour', status)
+        if m:
+            return False, float(m.group(1))
+        m = _re.search(r'(\d+)\s+week', status)
+        if m:
+            return False, float(m.group(1)) * 24 * 7
+        m = _re.search(r'(\d+)\s+day', status)
+        if m:
+            return False, float(m.group(1)) * 24
+        if "month" in status or "year" in status:
+            return False, 999.0
+
+        return False, -1.0
+
+    except Exception as e:
+        logger.warning(f"check_lot_full: ошибка {e}")
+        return False, -1.0
+    finally:
+        if page:
+            await page.close()
+
+
+async def run_cleanup(g2g: G2GBot, funpay: FunPayScraper, context=None,
+                      offline_hours_threshold: float = 48.0):
+    """
+    Чистка лотов:
+    - Лот ПРОДАН → удаляем с G2G
+    - Продавец ОФФЛАЙН >= offline_hours_threshold ч (по умолчанию 48 ч = 2 дня)
+      → удаляем с G2G + убираем из used_lots (бот сможет выложить снова)
     """
     pairs = storage.load_lot_pairs()
     if not pairs:
         logger.info("lot_pairs.json пуст - нечего проверять")
         return
 
-    # ── Шаг 1: собираем все пары в плоский список ──────────────────────────
+    # ── Шаг 1: собираем все пары ───────────────────────────────────────────
     all_pairs = []
     for game_name, game_pairs in pairs.items():
         for pair in game_pairs:
@@ -845,58 +903,79 @@ async def run_cleanup(g2g: G2GBot, funpay: FunPayScraper):
 
     total = len(all_pairs)
     logger.info(f"{'='*50}")
-    logger.info(f"Чистка: всего лотов в базе: {total}")
+    logger.info(f"Чистка: всего лотов в базе: {total} (порог оффлайна: {offline_hours_threshold:.0f}ч)")
     logger.info(f"{'='*50}")
 
-    # ── Шаг 2: HTTP-проверка всех лотов на FunPay ──────────────────────────
-    sem = asyncio.Semaphore(3)  # макс 3 параллельных запроса
-    to_delete: list[tuple[str, dict]] = []   # (game_name, pair)
-    to_keep:   list[tuple[str, dict]] = []   # (game_name, pair)
+    # ── Шаг 2: браузерная проверка каждого лота ────────────────────────────
+    # (sold + offline в одном визите)
+    _ctx = context or funpay.context
 
-    async def _check(game_name: str, pair: dict):
-        async with sem:
-            funpay_id = pair["funpay_id"]
-            g2g_id    = pair["g2g_id"]
-            sold = await _funpay_check_sold(session, funpay_id)
-            status = "ПРОДАН" if sold else "активен"
-            logger.info(f"FP={funpay_id} G2G={g2g_id} → {status}")
-            await asyncio.sleep(random.uniform(1.5, 3.0))  # не спамим FunPay
-            return game_name, pair, sold
+    to_delete_sold:    list[tuple[str, dict]] = []  # удаляем, used_lots НЕ трогаем
+    to_delete_offline: list[tuple[str, dict]] = []  # удаляем + снимаем с used_lots
+    to_keep:           list[tuple[str, dict]] = []
 
-    async with aiohttp.ClientSession() as session:
-        tasks = [_check(gn, p) for gn, p in all_pairs]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+    for idx, (game_name, pair) in enumerate(all_pairs, 1):
+        funpay_id = pair.get("funpay_id", "")
+        g2g_id    = pair.get("g2g_id", "")
+        title     = pair.get("title", "")[:50]
+        url       = pair.get("funpay_url") or (
+            f"https://funpay.com/en/lots/offer?id={funpay_id}" if funpay_id else ""
+        )
 
-    for result in results:
-        if isinstance(result, Exception):
-            logger.warning(f"Ошибка проверки: {result}")
+        if not url:
+            logger.warning(f"  [{idx}/{total}] FP={funpay_id}: нет URL — пропускаем")
+            to_keep.append((game_name, pair))
             continue
-        game_name, pair, sold = result
+
+        print(f"  Проверяем {idx}/{total}...", end="\r", flush=True)
+        sold, hours = await _check_lot_full(_ctx, url)
+
         if sold:
-            to_delete.append((game_name, pair))
+            logger.info(f"  [{idx}/{total}] ❌ ПРОДАН          | {title}")
+            to_delete_sold.append((game_name, pair))
+        elif hours != -1.0 and hours >= offline_hours_threshold:
+            label = f"{hours/24:.0f} дн." if hours >= 48 else f"{hours:.0f}ч"
+            logger.info(f"  [{idx}/{total}] ❌ ОФЛАЙН {label:>6}  | {title}")
+            to_delete_offline.append((game_name, pair))
         else:
+            if hours == 0.0:
+                print(f"  [{idx}/{total}] ✅ Онлайн            | {title[:40]}" + " " * 10)
+            elif hours > 0:
+                logger.info(f"  [{idx}/{total}] ✅ Офлайн {hours:.0f}ч       | {title}")
+            else:
+                print(f"  [{idx}/{total}] ✅ Активен           | {title[:40]}" + " " * 10)
             to_keep.append((game_name, pair))
 
+        await asyncio.sleep(random.uniform(1.0, 2.0))
+
+    print(" " * 80)
+    to_delete_all = to_delete_sold + to_delete_offline
     logger.info(f"{'='*50}")
-    logger.info(f"Проверено: {total} | Продано: {len(to_delete)} | Активных: {len(to_keep)}")
+    logger.info(f"Проверено: {total} | Продано: {len(to_delete_sold)} | "
+                f"Оффлайн 2+ дн.: {len(to_delete_offline)} | Активных: {len(to_keep)}")
     logger.info(f"{'='*50}")
 
-    if not to_delete:
+    if not to_delete_all:
         logger.info("Нет лотов для удаления с G2G")
         return
 
-    # ── Шаг 3: удаляем с G2G все найденные проданные лоты ─────────────────
-    logger.info(f"Удаляем {len(to_delete)} лотов с G2G...")
+    # ── Шаг 3: удаляем с G2G ──────────────────────────────────────────────
+    logger.info(f"Удаляем {len(to_delete_all)} лотов с G2G...")
     successfully_deleted: set = set()
 
-    for idx, (game_name, pair) in enumerate(to_delete, 1):
+    for idx, (game_name, pair) in enumerate(to_delete_all, 1):
         g2g_id    = pair["g2g_id"]
         funpay_id = pair["funpay_id"]
-        logger.info(f"  [{idx}/{len(to_delete)}] Удаляем G2G={g2g_id} (FP={funpay_id})...")
+        reason    = "продан" if pair in [p for _, p in to_delete_sold] else "оффлайн 2+ дн."
+        logger.info(f"  [{idx}/{len(to_delete_all)}] Удаляем G2G={g2g_id} ({reason}) FP={funpay_id}")
         deleted = await g2g.delete_lot(g2g_id)
         if deleted:
             successfully_deleted.add(g2g_id)
             logger.info(f"  G2G={g2g_id} удалён OK")
+            # Лот оффлайн-продавца убираем из used_lots — бот сможет выложить снова
+            if pair in [p for _, p in to_delete_offline] and funpay_id:
+                storage.remove_used_lot(funpay_id, game_name)
+                logger.info(f"  FP={funpay_id} снят с used_lots → бот выложит снова")
         else:
             logger.warning(f"  G2G={g2g_id} не удалось удалить — оставляем в базе")
         await asyncio.sleep(1.5)
@@ -904,23 +983,20 @@ async def run_cleanup(g2g: G2GBot, funpay: FunPayScraper):
     # ── Шаг 4: обновляем lot_pairs.json ────────────────────────────────────
     new_pairs: dict = {}
 
-    # Добавляем активные лоты
     for game_name, pair in to_keep:
-        if game_name not in new_pairs:
-            new_pairs[game_name] = []
-        new_pairs[game_name].append(pair)
+        new_pairs.setdefault(game_name, []).append(pair)
 
-    # Добавляем проданные которые не удалось удалить с G2G
-    for game_name, pair in to_delete:
+    for game_name, pair in to_delete_all:
         if pair["g2g_id"] not in successfully_deleted:
-            if game_name not in new_pairs:
-                new_pairs[game_name] = []
-            new_pairs[game_name].append(pair)
+            new_pairs.setdefault(game_name, []).append(pair)
 
     storage._save_atomic(storage.LOT_PAIRS_FILE, new_pairs)
 
     logger.info(f"{'='*50}")
-    logger.info(f"Итог: удалено с G2G {len(successfully_deleted)}/{len(to_delete)} | осталось в базе {sum(len(v) for v in new_pairs.values())}")
+    logger.info(
+        f"Итог: удалено с G2G {len(successfully_deleted)}/{len(to_delete_all)} "
+        f"| осталось в базе {sum(len(v) for v in new_pairs.values())}"
+    )
     logger.info(f"{'='*50}")
 
 
@@ -1143,7 +1219,7 @@ async def main():
 
         if choice == "0":
             logger.info("Запускаем чистку лотов...")
-            await run_cleanup(g2g, funpay)
+            await run_cleanup(g2g, funpay, context=context)
             logger.info("Чистка завершена!")
             input("Нажми Enter чтобы закрыть...")
 

@@ -902,67 +902,50 @@ async def run_cleanup(g2g: G2GBot, funpay: FunPayScraper, context=None,
     logger.info(f"Чистка: всего лотов в базе: {total} (порог оффлайна: {offline_hours_threshold:.0f}ч)")
     logger.info(f"{'='*50}")
 
-    # ── Шаг 2: параллельная браузерная проверка (3 страницы одновременно) ──
+    # ── Шаг 2: браузерная проверка — одна страница, переиспользуется ────────
     _ctx = context or funpay.context
-    WORKERS = 3  # кол-во параллельных страниц
 
-    # Результаты воркеров — список (game_name, pair, sold, hours)
-    results_raw: list[tuple[str, dict, bool, float]] = []
-    results_lock = asyncio.Lock()
-    checked_count = 0
-    checked_lock  = asyncio.Lock()
-
-    async def _worker(page, items):
-        nonlocal checked_count
-        for game_name, pair in items:
-            funpay_id = pair.get("funpay_id", "")
-            url       = pair.get("funpay_url") or (
-                f"https://funpay.com/en/lots/offer?id={funpay_id}" if funpay_id else ""
-            )
-            async with checked_lock:
-                checked_count += 1
-                n = checked_count
-            print(f"  Проверяем {n}/{total}...", end="\r", flush=True)
-
-            if not url:
-                async with results_lock:
-                    results_raw.append((game_name, pair, False, -1.0))
-                continue
-
-            sold, hours = await _check_lot_full(page, url)
-            async with results_lock:
-                results_raw.append((game_name, pair, sold, hours))
-            await asyncio.sleep(random.uniform(0.5, 1.0))
-
-    # Делим лоты равномерно между воркерами
-    chunks = [all_pairs[i::WORKERS] for i in range(WORKERS)]
-    pages  = [await _ctx.new_page() for _ in range(WORKERS)]
-    try:
-        await asyncio.gather(*[_worker(pages[i], chunks[i]) for i in range(WORKERS)])
-    finally:
-        for p in pages:
-            await p.close()
-
-    # Раскладываем результаты по корзинам
     to_delete_sold:    list[tuple[str, dict]] = []
     to_delete_offline: list[tuple[str, dict]] = []
     to_keep:           list[tuple[str, dict]] = []
 
-    for game_name, pair, sold, hours in results_raw:
-        title = pair.get("title", "")[:50]
-        if sold:
-            logger.info(f"  ❌ ПРОДАН          | {title}")
-            to_delete_sold.append((game_name, pair))
-        elif hours != -1.0 and hours >= offline_hours_threshold:
-            label = f"{hours/24:.0f} дн." if hours >= 48 else f"{hours:.0f}ч"
-            logger.info(f"  ❌ ОФЛАЙН {label:>6}  | {title}")
-            to_delete_offline.append((game_name, pair))
-        else:
-            if hours == 0.0:
-                logger.info(f"  ✅ Онлайн          | {title}")
-            elif hours > 0:
-                logger.info(f"  ✅ Офлайн {hours:.0f}ч     | {title}")
-            to_keep.append((game_name, pair))
+    fp_page = await _ctx.new_page()
+    try:
+        for idx, (game_name, pair) in enumerate(all_pairs, 1):
+            funpay_id = pair.get("funpay_id", "")
+            title     = pair.get("title", "")[:50]
+            url       = pair.get("funpay_url") or (
+                f"https://funpay.com/en/lots/offer?id={funpay_id}" if funpay_id else ""
+            )
+
+            print(f"  Проверяем {idx}/{total}...", end="\r", flush=True)
+
+            if not url:
+                logger.warning(f"  [{idx}/{total}] FP={funpay_id}: нет URL — пропускаем")
+                to_keep.append((game_name, pair))
+                continue
+
+            sold, hours = await _check_lot_full(fp_page, url)
+
+            if sold:
+                logger.info(f"  [{idx}/{total}] ❌ ПРОДАН          | {title}")
+                to_delete_sold.append((game_name, pair))
+            elif hours != -1.0 and hours >= offline_hours_threshold:
+                label = f"{hours/24:.0f} дн." if hours >= 48 else f"{hours:.0f}ч"
+                logger.info(f"  [{idx}/{total}] ❌ ОФЛАЙН {label:>6}  | {title}")
+                to_delete_offline.append((game_name, pair))
+            else:
+                if hours == 0.0:
+                    print(f"  [{idx}/{total}] ✅ Онлайн            | {title[:40]}" + " " * 10)
+                elif hours > 0:
+                    logger.info(f"  [{idx}/{total}] ✅ Офлайн {hours:.0f}ч       | {title}")
+                else:
+                    print(f"  [{idx}/{total}] ✅ Активен           | {title[:40]}" + " " * 10)
+                to_keep.append((game_name, pair))
+
+            await asyncio.sleep(random.uniform(1.5, 2.5))
+    finally:
+        await fp_page.close()
 
     print(" " * 80)
     to_delete_all = to_delete_sold + to_delete_offline

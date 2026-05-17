@@ -823,10 +823,19 @@ async def _funpay_check_sold(session: aiohttp.ClientSession, funpay_id: str) -> 
         return False
 
 
-async def _check_lot_full(page, funpay_url: str) -> tuple[bool, float]:
+_FP_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
+async def _check_lot_http(session: aiohttp.ClientSession, funpay_url: str) -> tuple[bool, float]:
     """
-    Один визит на страницу лота — возвращает (sold, offline_hours).
-    Принимает готовую page (переиспользуется для всех лотов — быстрее).
+    HTTP-проверка лота без браузера — возвращает (sold, offline_hours).
+    FunPay рендерит статус продавца на сервере, aiohttp его видит.
     sold=True           → лот продан/удалён
     offline_hours=0.0   → продавец онлайн
     offline_hours=N     → продавец оффлайн N часов
@@ -835,53 +844,62 @@ async def _check_lot_full(page, funpay_url: str) -> tuple[bool, float]:
     """
     import re as _re
     try:
-        await page.goto(funpay_url, wait_until="domcontentloaded", timeout=40000)
-        await asyncio.sleep(1.5)
-
-        content = await page.content()
-        for marker in ["Offer not found", "offer has expired", "been deleted",
-                        "never existed", "Предложение не найдено"]:
-            if marker.lower() in content.lower():
+        async with session.get(
+            funpay_url,
+            headers=_FP_HEADERS,
+            allow_redirects=True,
+            timeout=aiohttp.ClientTimeout(total=15),
+        ) as resp:
+            if resp.status == 404:
                 return True, -1.0
-        title = await page.title()
-        if "not found" in title.lower() or "404" in title:
-            return True, -1.0
+            if f"offer?id=" in funpay_url and f"offer?id=" not in str(resp.url):
+                return True, -1.0
+            html = await resp.text(errors="ignore")
 
-        status = await page.evaluate("""
-            () => {
-                const el = document.querySelector('.media-user-status');
-                return el ? el.innerText.trim().toLowerCase() : null;
-            }
-        """)
+        html_lower = html.lower()
 
-        if not status:
+        # Проверка продан
+        for marker in ["offer not found", "offer has expired", "been deleted",
+                        "never existed", "предложение не найдено"]:
+            if marker in html_lower:
+                return True, -1.0
+
+        # Парсим статус продавца из сырого HTML
+        m = _re.search(
+            r'class="media-user-status[^"]*"[^>]*>\s*([^<]+?)\s*<',
+            html, _re.IGNORECASE
+        )
+        if not m:
             return False, -1.0
+
+        status = m.group(1).strip().lower()
+
         if "online" in status and "ago" not in status:
             return False, 0.0
 
-        m = _re.search(r'(\d+)\s+hour', status)
-        if m:
-            return False, float(m.group(1))
-        m = _re.search(r'(\d+)\s+week', status)
-        if m:
-            return False, float(m.group(1)) * 24 * 7
-        m = _re.search(r'(\d+)\s+day', status)
-        if m:
-            return False, float(m.group(1)) * 24
+        m2 = _re.search(r'(\d+)\s+hour', status)
+        if m2:
+            return False, float(m2.group(1))
+        m2 = _re.search(r'(\d+)\s+week', status)
+        if m2:
+            return False, float(m2.group(1)) * 24 * 7
+        m2 = _re.search(r'(\d+)\s+day', status)
+        if m2:
+            return False, float(m2.group(1)) * 24
         if "month" in status or "year" in status:
             return False, 999.0
 
         return False, -1.0
 
     except Exception as e:
-        logger.warning(f"check_lot_full: ошибка {e}")
+        logger.warning(f"check_lot_http: ошибка {e}")
         return False, -1.0
 
 
 async def run_cleanup(g2g: G2GBot, funpay: FunPayScraper, context=None,
                       offline_hours_threshold: float = 48.0):
     """
-    Чистка лотов:
+    Чистка лотов через HTTP (без браузера — быстро):
     - Лот ПРОДАН → удаляем с G2G
     - Продавец ОФФЛАЙН >= offline_hours_threshold ч (по умолчанию 48 ч = 2 дня)
       → удаляем с G2G + убираем из used_lots (бот сможет выложить снова)
@@ -899,53 +917,53 @@ async def run_cleanup(g2g: G2GBot, funpay: FunPayScraper, context=None,
 
     total = len(all_pairs)
     logger.info(f"{'='*50}")
-    logger.info(f"Чистка: всего лотов в базе: {total} (порог оффлайна: {offline_hours_threshold:.0f}ч)")
+    logger.info(f"Чистка: {total} лотов (HTTP, параллельно 3, порог оффлайна: {offline_hours_threshold:.0f}ч)")
     logger.info(f"{'='*50}")
 
-    # ── Шаг 2: браузерная проверка — одна страница, переиспользуется ────────
-    _ctx = context or funpay.context
+    # ── Шаг 2: параллельные HTTP-запросы (sem=3, безопасно для FunPay) ────
+    sem = asyncio.Semaphore(3)
+    results_raw: list[tuple[str, dict, bool, float]] = []
+    checked = 0
 
+    async def _check_one(session, game_name, pair):
+        nonlocal checked
+        funpay_id = pair.get("funpay_id", "")
+        url       = pair.get("funpay_url") or (
+            f"https://funpay.com/en/lots/offer?id={funpay_id}" if funpay_id else ""
+        )
+        async with sem:
+            checked += 1
+            print(f"  Проверяем {checked}/{total}...", end="\r", flush=True)
+            if not url:
+                results_raw.append((game_name, pair, False, -1.0))
+                return
+            sold, hours = await _check_lot_http(session, url)
+            results_raw.append((game_name, pair, sold, hours))
+            await asyncio.sleep(random.uniform(0.3, 0.7))
+
+    async with aiohttp.ClientSession() as session:
+        await asyncio.gather(*[_check_one(session, gn, p) for gn, p in all_pairs])
+
+    # ── Раскладываем по корзинам ───────────────────────────────────────────
     to_delete_sold:    list[tuple[str, dict]] = []
     to_delete_offline: list[tuple[str, dict]] = []
     to_keep:           list[tuple[str, dict]] = []
 
-    fp_page = await _ctx.new_page()
-    try:
-        for idx, (game_name, pair) in enumerate(all_pairs, 1):
-            funpay_id = pair.get("funpay_id", "")
-            title     = pair.get("title", "")[:50]
-            url       = pair.get("funpay_url") or (
-                f"https://funpay.com/en/lots/offer?id={funpay_id}" if funpay_id else ""
-            )
-
-            print(f"  Проверяем {idx}/{total}...", end="\r", flush=True)
-
-            if not url:
-                logger.warning(f"  [{idx}/{total}] FP={funpay_id}: нет URL — пропускаем")
-                to_keep.append((game_name, pair))
-                continue
-
-            sold, hours = await _check_lot_full(fp_page, url)
-
-            if sold:
-                logger.info(f"  [{idx}/{total}] ❌ ПРОДАН          | {title}")
-                to_delete_sold.append((game_name, pair))
-            elif hours != -1.0 and hours >= offline_hours_threshold:
-                label = f"{hours/24:.0f} дн." if hours >= 48 else f"{hours:.0f}ч"
-                logger.info(f"  [{idx}/{total}] ❌ ОФЛАЙН {label:>6}  | {title}")
-                to_delete_offline.append((game_name, pair))
-            else:
-                if hours == 0.0:
-                    print(f"  [{idx}/{total}] ✅ Онлайн            | {title[:40]}" + " " * 10)
-                elif hours > 0:
-                    logger.info(f"  [{idx}/{total}] ✅ Офлайн {hours:.0f}ч       | {title}")
-                else:
-                    print(f"  [{idx}/{total}] ✅ Активен           | {title[:40]}" + " " * 10)
-                to_keep.append((game_name, pair))
-
-            await asyncio.sleep(random.uniform(1.5, 2.5))
-    finally:
-        await fp_page.close()
+    for game_name, pair, sold, hours in results_raw:
+        title = pair.get("title", "")[:50]
+        if sold:
+            logger.info(f"  ❌ ПРОДАН          | {title}")
+            to_delete_sold.append((game_name, pair))
+        elif hours != -1.0 and hours >= offline_hours_threshold:
+            label = f"{hours/24:.0f} дн." if hours >= 48 else f"{hours:.0f}ч"
+            logger.info(f"  ❌ ОФЛАЙН {label:>6}  | {title}")
+            to_delete_offline.append((game_name, pair))
+        else:
+            if hours == 0.0:
+                logger.info(f"  ✅ Онлайн          | {title}")
+            elif hours > 0:
+                logger.info(f"  ✅ Офлайн {hours:.0f}ч     | {title}")
+            to_keep.append((game_name, pair))
 
     print(" " * 80)
     to_delete_all = to_delete_sold + to_delete_offline

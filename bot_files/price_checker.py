@@ -96,27 +96,37 @@ async def _fetch_all_listing_prices(lots_url: str) -> dict[str, float]:
                 if not m_id:
                     continue
 
-                # Способ 1: data-s атрибут
-                m_pr = _re.search(r'data-s="([\d.]+)"', chunk)
-                if m_pr:
-                    try:
-                        prices[m_id.group(1)] = float(m_pr.group(1))
-                        found_this_page += 1
-                        continue
-                    except ValueError:
-                        pass
+                price = 0.0
 
-                # Способ 2: текст внутри tc-price
-                m_pr2 = _re.search(r'tc-price[^>]*>(.*?)</div>', chunk, _re.DOTALL)
-                if m_pr2:
-                    raw = m_pr2.group(1)
-                    m_num = _re.search(r'(\d+\.\d{2})', raw)
-                    if m_num:
+                # Ищем цену только внутри блока tc-price (не во всём chunk —
+                # иначе data-s самого a.tc-item содержит ID лота, а не цену)
+                tc_pos = chunk.find("tc-price")
+                if tc_pos >= 0:
+                    price_region = chunk[tc_pos:tc_pos + 300]
+
+                    # Способ 1: data-s атрибут внутри tc-price
+                    m_pr = _re.search(r'data-s="([\d.]+)"', price_region)
+                    if m_pr:
                         try:
-                            prices[m_id.group(1)] = float(m_num.group(1))
-                            found_this_page += 1
+                            price = float(m_pr.group(1))
                         except ValueError:
                             pass
+
+                    # Способ 2: текст внутри tc-price
+                    if not price:
+                        m_pr2 = _re.search(r'tc-price[^>]*>(.*?)</div>', price_region, _re.DOTALL)
+                        if m_pr2:
+                            m_num = _re.search(r'(\d+\.\d{2})', m_pr2.group(1))
+                            if m_num:
+                                try:
+                                    price = float(m_num.group(1))
+                                except ValueError:
+                                    pass
+
+                # Санитарная проверка: реальные цены аккаунтов в пределах $0.5–$9999
+                if 0.5 <= price <= 9999.0:
+                    prices[m_id.group(1)] = price
+                    found_this_page += 1
 
             logger.info(f"  Листинг стр.{page_num}: +{found_this_page} цен ({len(prices)} всего)")
 

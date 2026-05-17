@@ -1251,7 +1251,6 @@ async def main():
         elif choice == "p":
             logger.info("Запускаем проверку цен...")
             await run_price_check_menu(context, games)
-            logger.info("Проверка цен завершена!")
             input("Нажми Enter чтобы закрыть...")
 
         else:

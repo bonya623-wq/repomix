@@ -832,7 +832,8 @@ _FP_HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 
-async def _check_lot_http(session: aiohttp.ClientSession, funpay_url: str) -> tuple[bool, float]:
+async def _check_lot_http(session: aiohttp.ClientSession, funpay_url: str,
+                          retries: int = 3) -> tuple[bool, float]:
     """
     HTTP-проверка лота без браузера — возвращает (sold, offline_hours).
     FunPay рендерит статус продавца на сервере, aiohttp его видит.
@@ -843,66 +844,76 @@ async def _check_lot_http(session: aiohttp.ClientSession, funpay_url: str) -> tu
     offline_hours=999.0 → месяц/год назад
     """
     import re as _re
-    try:
-        async with session.get(
-            funpay_url,
-            headers=_FP_HEADERS,
-            allow_redirects=True,
-            timeout=aiohttp.ClientTimeout(total=15),
-        ) as resp:
-            if resp.status == 404:
-                return True, -1.0
-            if f"offer?id=" in funpay_url and f"offer?id=" not in str(resp.url):
-                return True, -1.0
-            html = await resp.text(errors="ignore")
+    for attempt in range(retries):
+        try:
+            async with session.get(
+                funpay_url,
+                headers=_FP_HEADERS,
+                allow_redirects=True,
+                timeout=aiohttp.ClientTimeout(total=20),
+            ) as resp:
+                if resp.status == 429:
+                    wait = 60 * (attempt + 1)
+                    logger.warning(f"check_lot_http: 429 Rate limit — ждём {wait}с ({attempt+1}/{retries})")
+                    await asyncio.sleep(wait)
+                    continue
+                if resp.status == 404:
+                    return True, -1.0
+                if "offer?id=" in funpay_url and "offer?id=" not in str(resp.url):
+                    return True, -1.0
+                html = await resp.text(errors="ignore")
 
-        html_lower = html.lower()
+            html_lower = html.lower()
 
-        # Проверка продан
-        for marker in ["offer not found", "offer has expired", "been deleted",
-                        "never existed", "предложение не найдено"]:
-            if marker in html_lower:
-                return True, -1.0
+            # Проверка продан
+            for marker in ["offer not found", "offer has expired", "been deleted",
+                            "never existed", "предложение не найдено"]:
+                if marker in html_lower:
+                    return True, -1.0
 
-        # Парсим статус продавца из сырого HTML
-        m = _re.search(
-            r'class="media-user-status[^"]*"[^>]*>\s*([^<]+?)\s*<',
-            html, _re.IGNORECASE
-        )
-        if not m:
+            # Парсим статус продавца из сырого HTML
+            m = _re.search(
+                r'class="media-user-status[^"]*"[^>]*>\s*([^<]+?)\s*<',
+                html, _re.IGNORECASE
+            )
+            if not m:
+                return False, -1.0
+
+            status = m.group(1).strip().lower()
+
+            if "online" in status and "ago" not in status:
+                return False, 0.0
+
+            m2 = _re.search(r'(\d+)\s+hour', status)
+            if m2:
+                return False, float(m2.group(1))
+            m2 = _re.search(r'(\d+)\s+week', status)
+            if m2:
+                return False, float(m2.group(1)) * 24 * 7
+            m2 = _re.search(r'(\d+)\s+day', status)
+            if m2:
+                return False, float(m2.group(1)) * 24
+            if "month" in status or "year" in status:
+                return False, 999.0
+
             return False, -1.0
 
-        status = m.group(1).strip().lower()
+        except Exception as e:
+            logger.warning(f"check_lot_http: ошибка {e}")
+            return False, -1.0
 
-        if "online" in status and "ago" not in status:
-            return False, 0.0
-
-        m2 = _re.search(r'(\d+)\s+hour', status)
-        if m2:
-            return False, float(m2.group(1))
-        m2 = _re.search(r'(\d+)\s+week', status)
-        if m2:
-            return False, float(m2.group(1)) * 24 * 7
-        m2 = _re.search(r'(\d+)\s+day', status)
-        if m2:
-            return False, float(m2.group(1)) * 24
-        if "month" in status or "year" in status:
-            return False, 999.0
-
-        return False, -1.0
-
-    except Exception as e:
-        logger.warning(f"check_lot_http: ошибка {e}")
-        return False, -1.0
+    logger.warning(f"check_lot_http: исчерпаны попытки для {funpay_url}")
+    return False, -1.0
 
 
 async def run_cleanup(g2g: G2GBot, funpay: FunPayScraper, context=None,
                       offline_hours_threshold: float = 48.0):
     """
-    Чистка лотов через HTTP (без браузера — быстро):
+    Чистка лотов через HTTP (без браузера):
     - Лот ПРОДАН → удаляем с G2G
     - Продавец ОФФЛАЙН >= offline_hours_threshold ч (по умолчанию 48 ч = 2 дня)
       → удаляем с G2G + убираем из used_lots (бот сможет выложить снова)
+    Запросы идут по одному с паузой 2-3с чтобы не получить 429.
     """
     pairs = storage.load_lot_pairs()
     if not pairs:
@@ -917,32 +928,25 @@ async def run_cleanup(g2g: G2GBot, funpay: FunPayScraper, context=None,
 
     total = len(all_pairs)
     logger.info(f"{'='*50}")
-    logger.info(f"Чистка: {total} лотов (HTTP, параллельно 3, порог оффлайна: {offline_hours_threshold:.0f}ч)")
+    logger.info(f"Чистка: {total} лотов (HTTP, по одному, порог оффлайна: {offline_hours_threshold:.0f}ч)")
     logger.info(f"{'='*50}")
 
-    # ── Шаг 2: параллельные HTTP-запросы (sem=3, безопасно для FunPay) ────
-    sem = asyncio.Semaphore(3)
+    # ── Шаг 2: последовательные HTTP-запросы с паузой 2-3с ────────────────
     results_raw: list[tuple[str, dict, bool, float]] = []
-    checked = 0
 
-    async def _check_one(session, game_name, pair):
-        nonlocal checked
-        funpay_id = pair.get("funpay_id", "")
-        url       = pair.get("funpay_url") or (
-            f"https://funpay.com/en/lots/offer?id={funpay_id}" if funpay_id else ""
-        )
-        async with sem:
-            checked += 1
+    async with aiohttp.ClientSession() as session:
+        for checked, (game_name, pair) in enumerate(all_pairs, 1):
+            funpay_id = pair.get("funpay_id", "")
+            url       = pair.get("funpay_url") or (
+                f"https://funpay.com/en/lots/offer?id={funpay_id}" if funpay_id else ""
+            )
             print(f"  Проверяем {checked}/{total}...", end="\r", flush=True)
             if not url:
                 results_raw.append((game_name, pair, False, -1.0))
-                return
+                continue
             sold, hours = await _check_lot_http(session, url)
             results_raw.append((game_name, pair, sold, hours))
-            await asyncio.sleep(random.uniform(0.3, 0.7))
-
-    async with aiohttp.ClientSession() as session:
-        await asyncio.gather(*[_check_one(session, gn, p) for gn, p in all_pairs])
+            await asyncio.sleep(random.uniform(2.0, 3.0))
 
     # ── Раскладываем по корзинам ───────────────────────────────────────────
     to_delete_sold:    list[tuple[str, dict]] = []

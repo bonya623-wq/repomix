@@ -959,10 +959,6 @@ async def run_cleanup(g2g: G2GBot, funpay: FunPayScraper, context=None,
             logger.info(f"  ❌ ОФЛАЙН {label:>6}  | {title}")
             to_delete_offline.append((game_name, pair))
         else:
-            if hours == 0.0:
-                logger.info(f"  ✅ Онлайн          | {title}")
-            elif hours > 0:
-                logger.info(f"  ✅ Офлайн {hours:.0f}ч     | {title}")
             to_keep.append((game_name, pair))
 
     print(" " * 80)

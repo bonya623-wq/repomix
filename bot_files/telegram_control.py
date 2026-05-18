@@ -817,14 +817,13 @@ def cmd_check(msg):
     if is_running():
         safe_send(msg.chat.id, "⚠️ Сначала останови бота!")
         return
-    kb = InlineKeyboardMarkup()
-    kb.add(InlineKeyboardButton("✅ Да, проверить всю базу", callback_data="check_all"))
-    kb.add(InlineKeyboardButton("❌ Отмена", callback_data="cancel"))
+    _selected[msg.chat.id] = set()
+    _mode[msg.chat.id] = "check"
     pairs = load_pairs()
     total = sum(len(v) for v in pairs.values())
     safe_send(msg.chat.id,
-                     f"🔍 Запустить проверку всей базы?\nЛотов в базе: {total}",
-                     reply_markup=kb)
+              f"🔍 Выбери игры для проверки (лотов в базе: {total}):",
+              reply_markup=games_keyboard(mode="check"))
 
 
 

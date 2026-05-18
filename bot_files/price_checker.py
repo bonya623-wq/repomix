@@ -25,8 +25,10 @@ def load_pairs() -> dict:
 
 
 def save_pairs(data: dict):
-    with open(LOT_PAIRS_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    p   = Path(LOT_PAIRS_FILE)
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(p)
 
 
 def get_price_multiplier(price: float, tiers: list) -> float:

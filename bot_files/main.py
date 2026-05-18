@@ -590,7 +590,9 @@ async def run_pass(funpay: FunPayScraper, g2g: G2GBot, game_cfg: dict, is_first_
                 if len(_stats) > 7:
                     for old_day in sorted(_stats.keys())[:-7]:
                         del _stats[old_day]
-                _stats_path.write_text(json.dumps(_stats, ensure_ascii=False, indent=2), encoding="utf-8")
+                _stats_tmp = _stats_path.with_suffix(".tmp")
+                _stats_tmp.write_text(json.dumps(_stats, ensure_ascii=False, indent=2), encoding="utf-8")
+                _stats_tmp.replace(_stats_path)
             except Exception as _e:
                 logger.warning(f"stats: не удалось записать: {_e}")
         else:
@@ -686,7 +688,7 @@ def _build_photo_list(lot_photos: list, game_name: str) -> list:
       - Game banners go FIRST (brand identity before lot screenshots).
       - Then scraped lot photos follow.
       - Only files that actually exist on disk are included (URLs are passed through).
-      - Total capped at 8 images (G2G limit).
+      - Total capped at 2 images (keeps uploads fast).
     """
     gallery_key = next(
         (k for k in GAME_GALLERY if k in game_name.lower()),

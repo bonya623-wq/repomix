@@ -492,17 +492,30 @@ def stream_logs(chat_id, choice, is_cleanup=False):
                         pass
 
                 elif "прогресс: проверено" in line_lower:
-                    m_p = re.search(r"проверено\s+(\d+)\s+из\s+(\d+)", line_lower)
-                    m_s = re.search(r"продано:\s*(\d+)", line_lower)
-                    m_o = re.search(r"не в сети 2\+[^:]*:\s*(\d+)", line_lower)
-                    if m_p:
-                        checked_count = int(m_p.group(1))
-                        total_lots    = int(m_p.group(2))
-                    if m_s:
-                        sold_count    = int(m_s.group(1))
-                    if m_o:
-                        offline_count = int(m_o.group(1))
-                    send_progress(force=True)
+                    try:
+                        m_p = re.search(r"проверено\s+(\d+)\s+из\s+(\d+)", line_lower)
+                        m_s = re.search(r"продано:\s*(\d+)", line_lower)
+                        m_o = re.search(r"не в сети 2\+[^:]*:\s*(\d+)", line_lower)
+                        if m_p:
+                            checked_count = int(m_p.group(1))
+                            total_lots    = int(m_p.group(2))
+                        if m_s:
+                            sold_count    = int(m_s.group(1))
+                        if m_o:
+                            offline_count = int(m_o.group(1))
+                        n   = total_lots if total_lots > 0 else "?"
+                        pct = f" ({checked_count * 100 // total_lots}%)" if total_lots > 0 else ""
+                        safe_send(chat_id,
+                            f"🔄 Проверено пар: {checked_count} из {n}{pct}\n"
+                            f"🛒 Продано на FunPay: {sold_count}\n"
+                            f"😴 Не в сети 2+ дн.: {offline_count}\n"
+                            f"🗑 Удалено с G2G: {deleted_count}")
+                    except Exception as _pe:
+                        logger.warning(f"progress send error: {_pe}")
+                        try:
+                            safe_send(chat_id, f"⚠️ Ошибка прогресса: {_pe}")
+                        except Exception:
+                            pass
 
                 elif "удаляем g2g=" in line_lower or "удаляем лот" in line_lower:
                     m = re.search(r"g2g=(\S+)", line_lower) or \
@@ -668,6 +681,10 @@ def stream_logs(chat_id, choice, is_cleanup=False):
 
     except Exception as e:
         logger.error(f"stream_logs: {e}")
+        try:
+            safe_send(chat_id, f"⚠️ stream_logs crash: {e}")
+        except Exception:
+            pass
     finally:
         flush()
         with _process_lock:

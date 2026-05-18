@@ -934,7 +934,8 @@ async def run_cleanup(g2g: G2GBot, funpay: FunPayScraper, context=None,
 
     # ── Шаг 2: последовательные HTTP-запросы с паузой 2-3с ────────────────
     results_raw: list[tuple[str, dict, bool, float]] = []
-    _found_sold = 0
+    _found_sold    = 0
+    _found_offline = 0
 
     async with aiohttp.ClientSession() as session:
         for checked, (game_name, pair) in enumerate(all_pairs, 1):
@@ -949,8 +950,13 @@ async def run_cleanup(g2g: G2GBot, funpay: FunPayScraper, context=None,
             results_raw.append((game_name, pair, sold, hours))
             if sold:
                 _found_sold += 1
+            elif hours != -1.0 and hours >= offline_hours_threshold:
+                _found_offline += 1
             if checked % 10 == 0 or checked == total:
-                logger.info(f"Прогресс: проверено {checked} из {total} | найдено к удалению: {_found_sold}")
+                logger.info(
+                    f"Прогресс: проверено {checked} из {total} | "
+                    f"продано: {_found_sold} | не в сети 2+ дн.: {_found_offline}"
+                )
             await asyncio.sleep(random.uniform(2.0, 3.0))
 
     # ── Раскладываем по корзинам ───────────────────────────────────────────

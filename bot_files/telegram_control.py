@@ -423,9 +423,10 @@ def stream_logs(chat_id, choice, is_cleanup=False):
     total_lots      = 0
     checked_count   = 0
     sold_count      = 0
+    offline_count   = 0
     deleted_count   = 0
     _sent_gids      = set()   # дедупликация: уже отправленные ID лотов
-    _last_progress  = None    # дедупликация: последний кортеж (checked, sold, deleted)
+    _last_progress  = None    # дедупликация: последний кортеж (checked, sold, offline, deleted)
 
     def flush():
         if buffer:
@@ -440,7 +441,7 @@ def stream_logs(chat_id, choice, is_cleanup=False):
         n = total_lots if total_lots > 0 else "?"
         if not force and checked_count % 10 != 0 and checked_count != total_lots:
             return
-        state = (checked_count, sold_count, deleted_count)
+        state = (checked_count, sold_count, offline_count, deleted_count)
         if state == _last_progress:
             return
         _last_progress = state
@@ -448,6 +449,7 @@ def stream_logs(chat_id, choice, is_cleanup=False):
         text = (
             f"🔄 Проверено пар: {checked_count} из {n}{pct}\n"
             f"🛒 Продано на FunPay: {sold_count}\n"
+            f"😴 Не в сети 2+ дн.: {offline_count}\n"
             f"🗑 Удалено с G2G: {deleted_count}"
         )
         try:
@@ -489,14 +491,17 @@ def stream_logs(chat_id, choice, is_cleanup=False):
                     except Exception:
                         pass
 
-                elif "прогресс: проверено" in line_lower and "найдено к удалению" in line_lower:
+                elif "прогресс: проверено" in line_lower:
                     m_p = re.search(r"проверено\s+(\d+)\s+из\s+(\d+)", line_lower)
-                    m_s = re.search(r"найдено к удалению:\s*(\d+)", line_lower)
+                    m_s = re.search(r"продано:\s*(\d+)", line_lower)
+                    m_o = re.search(r"не в сети 2\+[^:]*:\s*(\d+)", line_lower)
                     if m_p:
                         checked_count = int(m_p.group(1))
                         total_lots    = int(m_p.group(2))
                     if m_s:
-                        sold_count = int(m_s.group(1))
+                        sold_count    = int(m_s.group(1))
+                    if m_o:
+                        offline_count = int(m_o.group(1))
                     send_progress(force=True)
 
                 elif "удаляем g2g=" in line_lower or "удаляем лот" in line_lower:

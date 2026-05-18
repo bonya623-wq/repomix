@@ -489,23 +489,15 @@ def stream_logs(chat_id, choice, is_cleanup=False):
                     except Exception:
                         pass
 
-                elif " → продан" in line_lower or "→ активен" in line_lower:
-                    checked_count += 1
-                    if "продан" in line_lower:
-                        sold_count += 1
-                    send_progress()  # внутри уже фильтр каждые 10
-
-                elif "проверено:" in line_lower and "продано:" in line_lower:
-                    m_p = re.search(r"проверено:\s*(\d+)", line_lower)
-                    m_s = re.search(r"продано:\s*(\d+)", line_lower)
-                    if m_p: checked_count = int(m_p.group(1))
-                    if m_s: sold_count    = int(m_s.group(1))
+                elif "прогресс: проверено" in line_lower and "найдено к удалению" in line_lower:
+                    m_p = re.search(r"проверено\s+(\d+)\s+из\s+(\d+)", line_lower)
+                    m_s = re.search(r"найдено к удалению:\s*(\d+)", line_lower)
+                    if m_p:
+                        checked_count = int(m_p.group(1))
+                        total_lots    = int(m_p.group(2))
+                    if m_s:
+                        sold_count = int(m_s.group(1))
                     send_progress(force=True)
-                    if sold_count == 0:
-                        try:
-                            safe_send(chat_id, "✅ Все лоты активны, нечего удалять!")
-                        except Exception:
-                            pass
 
                 elif "удаляем g2g=" in line_lower or "удаляем лот" in line_lower:
                     m = re.search(r"g2g=(\S+)", line_lower) or \

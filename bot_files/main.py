@@ -929,10 +929,12 @@ async def run_cleanup(g2g: G2GBot, funpay: FunPayScraper, context=None,
     total = len(all_pairs)
     logger.info(f"{'='*50}")
     logger.info(f"Чистка: {total} лотов (HTTP, по одному, порог оффлайна: {offline_hours_threshold:.0f}ч)")
+    logger.info(f"Всего лотов в базе: {total}")
     logger.info(f"{'='*50}")
 
     # ── Шаг 2: последовательные HTTP-запросы с паузой 2-3с ────────────────
     results_raw: list[tuple[str, dict, bool, float]] = []
+    _found_sold = 0
 
     async with aiohttp.ClientSession() as session:
         for checked, (game_name, pair) in enumerate(all_pairs, 1):
@@ -940,12 +942,15 @@ async def run_cleanup(g2g: G2GBot, funpay: FunPayScraper, context=None,
             url       = pair.get("funpay_url") or (
                 f"https://funpay.com/en/lots/offer?id={funpay_id}" if funpay_id else ""
             )
-            print(f"  Проверяем {checked}/{total}...", end="\r", flush=True)
             if not url:
                 results_raw.append((game_name, pair, False, -1.0))
                 continue
             sold, hours = await _check_lot_http(session, url)
             results_raw.append((game_name, pair, sold, hours))
+            if sold:
+                _found_sold += 1
+            if checked % 10 == 0 or checked == total:
+                logger.info(f"Прогресс: проверено {checked} из {total} | найдено к удалению: {_found_sold}")
             await asyncio.sleep(random.uniform(2.0, 3.0))
 
     # ── Раскладываем по корзинам ───────────────────────────────────────────

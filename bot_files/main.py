@@ -19,6 +19,8 @@ import games.tl as tl_game
 import games.bdo as bdo_game
 import games.sw as sw_game
 import games.rbl as rbl_game
+import games.warframe as wf_game
+import warframe_slots
 import storage
 
 LOG_DIR = Path("logs")
@@ -307,6 +309,10 @@ async def run_pass(funpay: FunPayScraper, g2g: G2GBot, game_cfg: dict, is_first_
                 continue
             logger.info(f"SW: EU лот принят (server={sw_region or 'из title'})")
 
+        elif "warframe" in game_cfg["name"].lower():
+            wf_rank     = lot.rank or 0
+            wf_platform = lot.platform or "PC"
+            logger.info(f"WF: rank={wf_rank} platform={wf_platform!r}")
 
         # Generate unique title — shuffle segments of lot.title (same as Raid)
         _orig_title = (lot.title or "").strip()
@@ -467,6 +473,18 @@ async def run_pass(funpay: FunPayScraper, g2g: G2GBot, game_cfg: dict, is_first_
                 brief_description = (lot.title or "")[:200]
             logger.info(f"SW brief (generated): {brief_description!r}")
             logger.info(f"SW full  (FunPay):    {description[:80]!r}")
+        elif "warframe" in game_cfg["name"].lower():
+            description = lot.detailed_description or lot.description or lot.title or ""
+            try:
+                brief_description = warframe_slots.generate_warframe_brief(
+                    rank=lot.rank or 0,
+                    original_brief=lot.description or "",
+                )
+            except Exception as _e:
+                logger.warning(f"WF brief failed: {_e}")
+                brief_description = (lot.description or "")[:200]
+            logger.info(f"WF brief (generated): {brief_description!r}")
+            logger.info(f"WF full  (FunPay):    {description[:80]!r}")
         elif game_cfg.get("is_roblox"):
             # Roblox — оба поля description как на FunPay, без изменений
             description = lot.detailed_description or lot.description or lot.title or ""
@@ -527,6 +545,13 @@ async def run_pass(funpay: FunPayScraper, g2g: G2GBot, game_cfg: dict, is_first_
             }
             async def game_handler(page, bot, _cfg=game_cfg, _sp=_sw_params):
                 return await sw_game.fill_form(page, bot, _cfg, _sp)
+        elif "warframe" in game_cfg["name"].lower():
+            _wf_params = {
+                "platform": wf_platform,
+                "rank":     warframe_slots.warframe_rank_tier(wf_rank),
+            }
+            async def game_handler(page, bot, _cfg=game_cfg, _wp=_wf_params):
+                return await wf_game.fill_form(page, bot, _cfg, _wp)
         elif game_cfg.get("is_roblox"):
             _rbl_params = {"g2g_game_name": game_cfg.get("g2g_game_name", "")}
             async def game_handler(page, bot, _cfg=game_cfg, _rp=_rbl_params):

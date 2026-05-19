@@ -19,7 +19,7 @@ import games.tl as tl_game
 import games.bdo as bdo_game
 import games.sw as sw_game
 import games.rbl as rbl_game
-import games.warframe as wf_game
+import games.warframe_game as wf_game
 import warframe_slots
 import storage
 

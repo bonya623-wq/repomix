@@ -589,6 +589,13 @@ async def run_pass(funpay: FunPayScraper, g2g: G2GBot, game_cfg: dict, is_first_
                 game_handler=game_handler,
                 funpay_price=lot.price,
             )
+            if ok is None:
+                # game_handler вернул False — лот пропускаем без повтора
+                _id_to_save = lot.lot_id or lot.href
+                if _id_to_save:
+                    storage.save_used_lot(_id_to_save, game_name)
+                    used_lots.add(_id_to_save)
+                break
             if ok:
                 break
             if _attempt < 2:

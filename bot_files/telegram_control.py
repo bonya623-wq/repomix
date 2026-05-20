@@ -483,19 +483,9 @@ def stream_logs(chat_id, choice, is_cleanup=False):
                             sold_count    = int(m_s.group(1))
                         if m_o:
                             offline_count = int(m_o.group(1))
-                        n   = total_lots if total_lots > 0 else "?"
-                        pct = f" ({checked_count * 100 // total_lots}%)" if total_lots > 0 else ""
-                        safe_send(chat_id,
-                            f"🔄 Проверено пар: {checked_count} из {n}{pct}\n"
-                            f"🛒 Продано на FunPay: {sold_count}\n"
-                            f"😴 Не в сети 2+ дн.: {offline_count}\n"
-                            f"🗑 Удалено с G2G: {deleted_count}")
+                        send_progress()
                     except Exception as _pe:
                         logger.warning(f"progress send error: {_pe}")
-                        try:
-                            safe_send(chat_id, f"⚠️ Ошибка прогресса: {_pe}")
-                        except Exception:
-                            pass
 
                 elif "удаляем g2g=" in line_lower or "удаляем лот" in line_lower:
                     m = re.search(r"g2g=(\S+)", line_lower) or \

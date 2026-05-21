@@ -18,13 +18,16 @@ FUNPAY_TO_G2G_CLASS = {
 
 # Named sets/items to detect — order matters (checked top to bottom)
 _NAMED_SETS = [
-    ("dragan",   "Dragan Set"),
-    ("bgh",      "BGH Set"),
-    ("winter",   "Winter Set"),
-    ("guardian", "Guardian Set"),
-    ("sargon",   "Sargon Set"),
-    ("herald",   "Herald Set"),
-    ("q7",       "Q7 Set"),
+    ("dragan",      "Dragan Set"),
+    ("golden dragon", "Golden Dragon Set"),
+    ("bgh",         "BGH Set"),
+    ("winter",      "Winter Set"),
+    ("guardian",    "Guardian Set"),
+    ("sargon",      "Sargon Set"),
+    ("herald",      "Herald Set"),
+    ("q7",          "Q7 Set"),
+    ("chinese",     "Chinese New Year Set"),
+    ("lunar",       "Lunar Set"),
 ]
 
 _EMOJI_RE = re.compile(

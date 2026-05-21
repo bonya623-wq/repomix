@@ -530,7 +530,13 @@ async def run_pass(funpay: FunPayScraper, g2g: G2GBot, game_cfg: dict, is_first_
 
             # Если AI сгенерировал brief — используем его как Title (не для Raid и Roblox)
             if brief_description and not game_cfg.get("is_roblox") and "raid" not in game_cfg["name"].lower():
-                ai_title = brief_description[:128].rstrip(" |+—")
+                if len(brief_description) > 128:
+                    # Режем по последнему " | " чтобы не обрывать слово посередине
+                    _cut = brief_description[:128].rfind(" | ")
+                    ai_title = brief_description[:_cut] if _cut > 0 else brief_description[:128]
+                else:
+                    ai_title = brief_description
+                ai_title = ai_title.rstrip(" |+—")
                 logger.info(f"Title (AI override): {ai_title!r}")
                 new_title = ai_title
         # Build game_handler — function called during G2G form filling

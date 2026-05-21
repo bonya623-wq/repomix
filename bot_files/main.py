@@ -991,11 +991,11 @@ async def _check_lot_http(session: aiohttp.ClientSession, funpay_url: str,
 
 
 async def run_cleanup(g2g: G2GBot, funpay: FunPayScraper, context=None,
-                      offline_hours_threshold: float = 48.0):
+                      offline_hours_threshold: float = 96.0):
     """
     Чистка лотов через HTTP (без браузера):
     - Лот ПРОДАН → удаляем с G2G
-    - Продавец ОФФЛАЙН >= offline_hours_threshold ч (по умолчанию 48 ч = 2 дня)
+    - Продавец ОФФЛАЙН >= offline_hours_threshold ч (по умолчанию 96 ч = 4 дня)
       → удаляем с G2G + убираем из used_lots (бот сможет выложить снова)
     Запросы идут по одному с паузой 2-3с чтобы не получить 429.
     """
@@ -1039,7 +1039,7 @@ async def run_cleanup(g2g: G2GBot, funpay: FunPayScraper, context=None,
             if checked % 10 == 0 or checked == total:
                 logger.info(
                     f"Прогресс: проверено {checked} из {total} | "
-                    f"продано: {_found_sold} | не в сети 2+ дн.: {_found_offline}"
+                    f"продано: {_found_sold} | не в сети 4+ дн.: {_found_offline}"
                 )
             await asyncio.sleep(random.uniform(2.0, 3.0))
 
@@ -1064,7 +1064,7 @@ async def run_cleanup(g2g: G2GBot, funpay: FunPayScraper, context=None,
     to_delete_all = to_delete_sold + to_delete_offline
     logger.info(f"{'='*50}")
     logger.info(f"Проверено: {total} | Продано: {len(to_delete_sold)} | "
-                f"Оффлайн 2+ дн.: {len(to_delete_offline)} | Активных: {len(to_keep)}")
+                f"Оффлайн 4+ дн.: {len(to_delete_offline)} | Активных: {len(to_keep)}")
     logger.info(f"{'='*50}")
 
     if not to_delete_all:
@@ -1079,7 +1079,7 @@ async def run_cleanup(g2g: G2GBot, funpay: FunPayScraper, context=None,
     for idx, (game_name, pair) in enumerate(to_delete_all, 1):
         g2g_id    = pair["g2g_id"]
         funpay_id = pair["funpay_id"]
-        reason    = "оффлайн 2+ дн." if g2g_id in offline_g2g_ids else "продан"
+        reason    = "оффлайн 4+ дн." if g2g_id in offline_g2g_ids else "продан"
         logger.info(f"  [{idx}/{len(to_delete_all)}] Удаляем G2G={g2g_id} ({reason}) FP={funpay_id}")
         deleted = await g2g.delete_lot(g2g_id)
         if deleted:

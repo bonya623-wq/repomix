@@ -528,8 +528,8 @@ async def run_pass(funpay: FunPayScraper, g2g: G2GBot, game_cfg: dict, is_first_
             logger.info(f"Brief: {brief_description!r}")
             logger.info(f"Full (FunPay): {description[:80]!r}")
 
-            # Если AI сгенерировал brief — используем его как Title (не для Raid и Roblox)
-            if brief_description and not game_cfg.get("is_roblox") and "raid" not in game_cfg["name"].lower():
+            # Если AI сгенерировал brief — используем его как Title (кроме Roblox)
+            if brief_description and not game_cfg.get("is_roblox"):
                 if len(brief_description) > 128:
                     # Режем по последнему " | " чтобы не обрывать слово посередине
                     _cut = brief_description[:128].rfind(" | ")

@@ -532,6 +532,7 @@
       "name": "Drakensang Online",
       "enabled": true,
       "funpay_url": "https://funpay.com/en/lots/466/",
+      "funpay_region_filter": "",
       "price_multiplier": 1.6,
       "min_funpay_price_usd": 10,
       "max_funpay_price_usd": 1500,
@@ -542,14 +543,22 @@
       "title_blacklist": [],
       "blacklist_whitelist": [],
       "seller_blacklist": [],
-      "builtin_blacklist": ["agathon", "tegan", "(us)"],
+      "builtin_blacklist": [
+        "agathon",
+        "tegan",
+        "(us)"
+      ],
       "price_tiers": [
-        { "min": 0,    "max": 50,    "multiplier": 1.8  },
-        { "min": 50,   "max": 100,   "multiplier": 1.7  },
-        { "min": 100,  "max": 200,   "multiplier": 1.6  },
-        { "min": 200,  "max": 400,   "multiplier": 1.5  },
-        { "min": 400,  "max": 700,   "multiplier": 1.4  },
-        { "min": 700,  "max": 99999, "multiplier": 1.3  }
+        { "min": 0,    "max": 100,   "multiplier": 1.8  },
+        { "min": 100,  "max": 200,   "multiplier": 1.49 },
+        { "min": 200,  "max": 300,   "multiplier": 1.53 },
+        { "min": 300,  "max": 400,   "multiplier": 1.5  },
+        { "min": 400,  "max": 500,   "multiplier": 1.43 },
+        { "min": 500,  "max": 600,   "multiplier": 1.42 },
+        { "min": 600,  "max": 700,   "multiplier": 1.43 },
+        { "min": 700,  "max": 1000,  "multiplier": 1.39 },
+        { "min": 1000, "max": 1500,  "multiplier": 1.35 },
+        { "min": 1500, "max": 99999, "multiplier": 1.33 }
       ],
       "g2g_dropdowns": []
     },

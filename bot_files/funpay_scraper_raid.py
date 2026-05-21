@@ -67,6 +67,7 @@ class FunPayLot:
     server: str = ""    # Server param-item со страницы лота (напр. "(EU) Usurper", "(EU)")
     rank: int = 0       # Rank param-item со страницы лота (33, 28...)
     platform: str = ""  # Platform param-item со страницы лота (PC, PS4, Xbox One)
+    char_class: str = "" # Class param-item со страницы лота (Dragonknight, Ranger...)
 
 
 # Mapping игры -> hex галереи на postimages
@@ -80,7 +81,8 @@ POSTIMAGES_GALLERY_HEX = {
     "black":     "0yV08VV",
     "summoners": "MqQH3TR",
     "rbl":       "14stMdJ",
-    "warframe":  "mbMXTds",
+    "warframe":   "mbMXTds",
+    "drakensang": "",  # TODO: добавь hex галереи postimages для Drakensang
 }
 
 
@@ -437,6 +439,7 @@ class FunPayScraper:
                     let server = '';
                     let rank_val = '';
                     let platform_val = '';
+                    let class_val = '';
                     const items = document.querySelectorAll('.param-item');
                     for (const item of items) {
                         const h5 = item.querySelector('h5');
@@ -449,8 +452,9 @@ class FunPayScraper:
                         if (key === 'server') server = val;
                         if (key === 'rank') rank_val = val;
                         if (key === 'platform') platform_val = val;
+                        if (key === 'class') class_val = val;
                     }
-                    return {short: short_desc, detailed: detailed_desc, server: server, rank: rank_val, platform: platform_val};
+                    return {short: short_desc, detailed: detailed_desc, server: server, rank: rank_val, platform: platform_val, char_class: class_val};
                 }
             """)
             description = result.get('short', '') or ''
@@ -458,6 +462,7 @@ class FunPayScraper:
             lot_server = result.get('server', '') or ''
             lot_rank = int(result.get('rank', '') or 0) if str(result.get('rank', '') or '').isdigit() else 0
             lot_platform = result.get('platform', '') or ''
+            lot_char_class = result.get('char_class', '') or ''
 
             # Фото
             photo_els = await page.query_selector_all(".attachments-thumb")
@@ -467,8 +472,8 @@ class FunPayScraper:
                 if href:
                     photo_urls.append(href)
 
-            logger.info(f"FunPay: Short ({len(description)} симв.) | Detailed ({len(detailed_description)} симв.) | фото: {len(photo_urls)} | server: {lot_server!r} | rank: {lot_rank} | platform: {lot_platform!r}")
-            return description, detailed_description, photo_urls, lot_server, lot_rank, lot_platform
+            logger.info(f"FunPay: Short ({len(description)} симв.) | Detailed ({len(detailed_description)} симв.) | фото: {len(photo_urls)} | server: {lot_server!r} | rank: {lot_rank} | platform: {lot_platform!r} | class: {lot_char_class!r}")
+            return description, detailed_description, photo_urls, lot_server, lot_rank, lot_platform, lot_char_class
 
         except Exception as e:
             logger.warning(f"FunPay: ошибка деталей лота: {e}")
@@ -705,9 +710,10 @@ class FunPayScraper:
                     lot_server = ""
                     lot_rank = 0
                     lot_platform = ""
+                    lot_char_class = ""
                     if lot_href:
                         lot_url = lot_href if lot_href.startswith("http") else f"https://funpay.com{lot_href}"
-                        description, detailed_description, photo_urls, lot_server, lot_rank, lot_platform = await self._get_lot_details(lot_url)
+                        description, detailed_description, photo_urls, lot_server, lot_rank, lot_platform, lot_char_class = await self._get_lot_details(lot_url)
                         description = description or title
 
                     # Полная проверка title + short description + detailed description
@@ -762,6 +768,7 @@ class FunPayScraper:
                         server=lot_server or card_server,
                         rank=lot_rank,
                         platform=lot_platform,
+                        char_class=lot_char_class,
                     )
 
                 except Exception as e:

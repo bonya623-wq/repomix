@@ -529,6 +529,31 @@
       ]
     },
     {
+      "name": "Drakensang Online",
+      "enabled": true,
+      "funpay_url": "https://funpay.com/en/lots/466/",
+      "price_multiplier": 1.6,
+      "min_funpay_price_usd": 10,
+      "max_funpay_price_usd": 1500,
+      "min_seller_reviews": 0,
+      "require_auto_delivery": false,
+      "lots_per_pass": 10,
+      "loop_interval_seconds": 60,
+      "title_blacklist": [],
+      "blacklist_whitelist": [],
+      "seller_blacklist": [],
+      "builtin_blacklist": ["agathon", "tegan", "(us)"],
+      "price_tiers": [
+        { "min": 0,    "max": 50,    "multiplier": 1.8  },
+        { "min": 50,   "max": 100,   "multiplier": 1.7  },
+        { "min": 100,  "max": 200,   "multiplier": 1.6  },
+        { "min": 200,  "max": 400,   "multiplier": 1.5  },
+        { "min": 400,  "max": 700,   "multiplier": 1.4  },
+        { "min": 700,  "max": 99999, "multiplier": 1.3  }
+      ],
+      "g2g_dropdowns": []
+    },
+    {
       "name": "Roblox",
       "enabled": true,
       "g2g_brand": "RBL",

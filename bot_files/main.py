@@ -21,6 +21,8 @@ import games.sw as sw_game
 import games.rbl as rbl_game
 import games.warframe_game as wf_game
 import warframe_slots
+import games.drakensang_game as dso_game
+import drakensang_slots
 import storage
 
 LOG_DIR = Path("logs")
@@ -314,6 +316,17 @@ async def run_pass(funpay: FunPayScraper, g2g: G2GBot, game_cfg: dict, is_first_
             wf_platform = lot.platform or "PC"
             logger.info(f"WF: rank={wf_rank} platform={wf_platform!r}")
 
+        elif "drakensang" in game_cfg["name"].lower():
+            dso_server_g2g = drakensang_slots.get_dso_server(lot.server or "")
+            dso_class_g2g  = drakensang_slots.get_dso_class(lot.char_class or "")
+            dso_level      = lot.level or 0
+            if not dso_server_g2g:
+                logger.warning(f"DSO: сервер '{lot.server}' не поддерживается — пропускаем")
+                storage.save_used_lot(lot.lot_id, game_name)
+                used_lots.add(lot.lot_id)
+                continue
+            logger.info(f"DSO: server={dso_server_g2g!r} class={dso_class_g2g!r} level={dso_level}")
+
         # Generate unique title — shuffle segments of lot.title (same as Raid)
         _orig_title = (lot.title or "").strip()
         _description = (lot.detailed_description or lot.description or "").strip()
@@ -485,6 +498,20 @@ async def run_pass(funpay: FunPayScraper, g2g: G2GBot, game_cfg: dict, is_first_
                 brief_description = (lot.description or "")[:200]
             logger.info(f"WF brief (generated): {brief_description!r}")
             logger.info(f"WF full  (FunPay):    {description[:80]!r}")
+        elif "drakensang" in game_cfg["name"].lower():
+            description = lot.detailed_description or lot.description or lot.title or ""
+            try:
+                brief_description = drakensang_slots.generate_dso_brief(
+                    level=lot.level or 0,
+                    dso_class=dso_class_g2g,
+                    server=dso_server_g2g,
+                    original_brief=lot.description or "",
+                )
+            except Exception as _e:
+                logger.warning(f"DSO brief failed: {_e}")
+                brief_description = (lot.description or "")[:200]
+            logger.info(f"DSO brief (generated): {brief_description!r}")
+            logger.info(f"DSO full  (FunPay):    {description[:80]!r}")
         elif game_cfg.get("is_roblox"):
             # Roblox — оба поля description как на FunPay, без изменений
             description = lot.detailed_description or lot.description or lot.title or ""
@@ -552,6 +579,14 @@ async def run_pass(funpay: FunPayScraper, g2g: G2GBot, game_cfg: dict, is_first_
             }
             async def game_handler(page, bot, _cfg=game_cfg, _wp=_wf_params):
                 return await wf_game.fill_form(page, bot, _cfg, _wp)
+        elif "drakensang" in game_cfg["name"].lower():
+            _dso_params = {
+                "server":     dso_server_g2g,
+                "level_tier": drakensang_slots.dso_level_tier(lot.level or 0),
+                "dso_class":  dso_class_g2g,
+            }
+            async def game_handler(page, bot, _cfg=game_cfg, _dp=_dso_params):
+                return await dso_game.fill_form(page, bot, _cfg, _dp)
         elif game_cfg.get("is_roblox"):
             _rbl_params = {"g2g_game_name": game_cfg.get("g2g_game_name", "")}
             async def game_handler(page, bot, _cfg=game_cfg, _rp=_rbl_params):

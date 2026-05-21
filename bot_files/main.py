@@ -416,7 +416,7 @@ async def run_pass(funpay: FunPayScraper, g2g: G2GBot, game_cfg: dict, is_first_
         # Extra context per game for AI prompt
         _ai_extra = ""
         if game_cfg.get("region"):
-            _ai_extra = f"Server: {server_g2g}, Level: {wow_params.get('level','')}, Class: {wow_params.get('wow_class','')}"
+            _ai_extra = f"Server: {server_g2g}, Level: {wow_params.get('level','')}, Class: {wow_params.get('wow_class','')}, Race: {wow_params.get('race','')}, Faction: {wow_params.get('faction','')}"
         elif "zenless" in game_cfg["name"].lower():
             _ai_extra = f"Level: {zzz_params.get('level_raw',0)}, Server: {lot.region or 'Europe'}"
         elif "warframe" in game_cfg["name"].lower():
@@ -424,7 +424,15 @@ async def run_pass(funpay: FunPayScraper, g2g: G2GBot, game_cfg: dict, is_first_
         elif "drakensang" in game_cfg["name"].lower():
             _ai_extra = f"Level: {lot.level or 0}, Class: {dso_class_g2g}, Server: {dso_server_g2g}"
         elif "black desert" in game_cfg["name"].lower():
-            _ai_extra = f"Level: {lot.level or 0}, Class: {bdo_class_g2g}"
+            _ai_extra = f"Level: {lot.level or 0}, Class: {bdo_class_g2g}, Server: {server_g2g}"
+        elif "eve" in game_cfg["name"].lower():
+            _ai_extra = f"Server: {lot.server or ''}, Region: {lot.region or 'EU'}"
+        elif "throne" in game_cfg["name"].lower() or "liberty" in game_cfg["name"].lower():
+            _ai_extra = f"Server: {server_g2g}, Level: {lot.level or ''}"
+        elif "summoners" in game_cfg["name"].lower():
+            _ai_extra = f"Server: {lot.region or 'Global'}"
+        elif "raid" in game_cfg["name"].lower():
+            _ai_extra = f"Mythics: {lot.m_heroes or 0}, Legendaries: {lot.l_heroes or 0}"
 
         # Roblox — без brief, оставляем как есть
         if game_cfg.get("is_roblox"):

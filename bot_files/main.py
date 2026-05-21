@@ -506,6 +506,7 @@ async def run_pass(funpay: FunPayScraper, g2g: G2GBot, game_cfg: dict, is_first_
                     dso_class=dso_class_g2g,
                     server=dso_server_g2g,
                     original_brief=lot.description or "",
+                    detailed=lot.detailed_description or "",
                 )
             except Exception as _e:
                 logger.warning(f"DSO brief failed: {_e}")

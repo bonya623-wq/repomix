@@ -14,7 +14,20 @@ logger = logging.getLogger(__name__)
 
 _GAME_HINTS = {
     "raid":        "Focus on: power level, legendary count, mythic count, key champions (Arbiter, Siphi, etc.)",
-    "wow":         "Focus on: character level, class, server, gear score or key achievements",
+    "wow":         (
+        "Strict priority order for WoW account listings:\n"
+        "1. GS/ilvl (e.g. '1750 GS', 'ilvl 450') — FIRST, most important\n"
+        "2. Flying mount speed (e.g. 'Fly 60%', 'Epic Flying', '100% Mount')\n"
+        "3. Professions with skill level (e.g. 'Enchanting 300', 'Herbalism 375')\n"
+        "4. Race + Class + Level + Spec + BiS (e.g. 'Undead Priest 70 Shadow', 'Orc Warrior 70 Fury Pre-BiS')\n"
+        "5. Dual Spec (if mentioned)\n"
+        "6. Attunement / Heroic Keys / Raids (e.g. 'Kara attuned', 'Full Heroic Keys')\n"
+        "7. PvP titles / Duelist / arena rating\n"
+        "8. Named mounts / Legendary weapons\n"
+        "9. Expansion / Season (e.g. 'TBC', 'Anniversary', 'S1')\n"
+        "10. Server + Region (e.g. 'Spineshatter EU') — LAST\n"
+        "Skip: account security info, country, subscription days, delivery info."
+    ),
     "zenless":     "Focus on: inter-knot level, S-rank agents, server region",
     "eve":         "Focus on: skill points (SP), ship types (Titan/Rorqual/etc.), key skills",
     "throne":      "Focus on: gear score, server, class, key items",

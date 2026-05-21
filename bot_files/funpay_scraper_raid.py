@@ -82,7 +82,7 @@ POSTIMAGES_GALLERY_HEX = {
     "summoners": "MqQH3TR",
     "rbl":       "14stMdJ",
     "warframe":   "mbMXTds",
-    "drakensang": "",  # TODO: добавь hex галереи postimages для Drakensang
+    "drakensang": "GvdF4Jm",
 }
 
 

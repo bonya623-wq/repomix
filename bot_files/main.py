@@ -441,12 +441,27 @@ async def run_pass(funpay: FunPayScraper, g2g: G2GBot, game_cfg: dict, is_first_
         else:
             # 1. Пробуем AI
             _ai_source = f"{lot.title or ''}\n{lot.description or ''}\n{lot.detailed_description or ''}".strip()
+
+            # Пропускаем лот если описание слишком короткое — нечего публиковать
+            if len(_ai_source) < 50:
+                logger.info(f"Пропускаем лот {lot.lot_id} — описание слишком короткое ({len(_ai_source)} симв.): {_ai_source!r}")
+                storage.save_used_lot(lot.lot_id, game_name)
+                used_lots.add(lot.lot_id)
+                continue
+
             brief_description = generate_brief_ai(
                 game_name=game_cfg["name"],
                 description=_ai_source,
                 extra_context=_ai_extra,
                 api_key=_claude_api_key,
             )
+
+            # Если AI вернул слишком короткий результат — тоже пропускаем
+            if brief_description and len(brief_description) < 20:
+                logger.info(f"Пропускаем лот {lot.lot_id} — AI brief слишком короткий: {brief_description!r}")
+                storage.save_used_lot(lot.lot_id, game_name)
+                used_lots.add(lot.lot_id)
+                continue
 
             # 2. Fallback на старую логику если AI недоступен
             if not brief_description:

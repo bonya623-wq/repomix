@@ -29,10 +29,42 @@ _GAME_HINTS = {
         "Skip: account security info, country, subscription days, delivery info."
     ),
     "zenless":     "Focus on: inter-knot level, S-rank agents, server region",
-    "eve":         "Focus on: skill points (SP), ship types (Titan/Rorqual/etc.), key skills",
-    "throne":      "Focus on: gear score, server, class, key items",
-    "black desert":"Focus on: gear score (GS), class, level, key items (TET/PEN Blackstar etc.)",
-    "summoners":   "Focus on: nat5 count, key monsters, server",
+    "eve":         (
+        "Strict priority order for EVE Online account listings:\n"
+        "1. Skill Points — e.g. '42M SP', '85M SP'\n"
+        "2. Ship types — Titan, Rorqual, Carrier, Dreadnought, Orca, Supercarrier\n"
+        "3. Key skills — Cyno V, Jump Drive Calibration V, Industry skills\n"
+        "4. ISK / assets — e.g. '5B ISK', 'fitted ships'\n"
+        "5. Region — EU / US — LAST\n"
+        "Skip: account security, email, delivery info."
+    ),
+    "throne":      (
+        "Strict priority order for Throne and Liberty account listings:\n"
+        "1. Gear Score (GS) — e.g. '3500 GS' — FIRST, most important\n"
+        "2. Weapon / class — e.g. 'Greatsword/Daggers', 'Staff/Wand', 'Crossbow/Dagger'\n"
+        "3. Key items / sets — e.g. 'Tier 2 set', named set pieces, rare accessories\n"
+        "4. Level — e.g. 'Lv50', 'Max level'\n"
+        "5. Server — LAST\n"
+        "Skip: account security, delivery info."
+    ),
+    "black desert": (
+        "Strict priority order for Black Desert Online account listings:\n"
+        "1. Gear Score (GS) — e.g. '280 GS', '320 GS' — FIRST, most important\n"
+        "2. Key gear — TET/PEN Blackstar weapons, TET/PEN accessories (e.g. TET Capotia, PEN Crescent)\n"
+        "3. Class — e.g. 'Warrior', 'Witch', 'Dark Knight'\n"
+        "4. Level — e.g. 'Lv65', 'Lv67'\n"
+        "5. Server / region — LAST\n"
+        "Skip: account security, delivery info."
+    ),
+    "summoners":   (
+        "Strict priority order for Summoners War account listings:\n"
+        "1. Nat5 count — e.g. '45 nat5', '120 nat5' — FIRST, most important\n"
+        "2. Key monsters by name — e.g. 'Verad, Tesarion, Bigo, Perna'\n"
+        "3. Server — Global / Europe / Asia / Korea\n"
+        "4. Arena / RTA ranking — e.g. 'C1 arena', 'G1 RTA'\n"
+        "5. Legend runes count — e.g. '800 legend runes'\n"
+        "Skip: account security, delivery info."
+    ),
     "warframe":    "Focus on: Mastery Rank (MR), platinum, Prime Vault, key mods",
     "drakensang":  "Focus on: named sets (Dragan/BGH/Winter/Guardian etc.), Knowledge points, level, class",
 }

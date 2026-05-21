@@ -97,5 +97,5 @@ def generate_dso_brief(level: int, dso_class: str, server: str,
         clean = _EMOJI_RE.sub("", original_brief or "").strip()
         highlights = re.sub(r"\s+", " ", clean)[:100]
 
-    parts = [p for p in [header, srv, highlights] if p]
+    parts = [p for p in [highlights, header, srv] if p]
     return " | ".join(parts)[:200]

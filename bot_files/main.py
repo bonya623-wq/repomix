@@ -23,10 +23,14 @@ import games.warframe_game as wf_game
 import warframe_slots
 import games.drakensang_game as dso_game
 import drakensang_slots
+from ai_brief import generate_brief_ai
 import storage
 
 LOG_DIR = Path("logs")
 LOG_DIR.mkdir(exist_ok=True)
+
+# Set by main() from config — used by run_pass for AI brief generation
+_claude_api_key: str = ""
 
 logging.basicConfig(
     level=logging.INFO,
@@ -405,132 +409,124 @@ async def run_pass(funpay: FunPayScraper, g2g: G2GBot, game_cfg: dict, is_first_
         logger.info(f"Title new:   {new_title!r}")
 
         # Description
-        # brief_description → краткое (textarea 1 на G2G): наша генерация по слотам
-        # description       → полное  (textarea 2 на G2G): точно как на FunPay, без изменений
+        # brief_description → краткое (textarea 1 на G2G)
+        # description       → полное  (textarea 2 на G2G): точно как на FunPay
+        description = lot.detailed_description or lot.description or lot.title or ""
+
+        # Extra context per game for AI prompt
+        _ai_extra = ""
         if game_cfg.get("region"):
-            # WoW — краткое не генерируем, полное как на FunPay
-            description       = lot.detailed_description or lot.description or lot.title or ""
-            brief_description = ""
+            _ai_extra = f"Server: {server_g2g}, Level: {wow_params.get('level','')}, Class: {wow_params.get('wow_class','')}"
         elif "zenless" in game_cfg["name"].lower():
-            # ZZZ — краткое генерируем через zzz_slots, полное как на FunPay
-            description = lot.detailed_description or lot.description or lot.title or ""
-            try:
-                from zzz_slots import generate_zzz_brief_description
-                brief_description = generate_zzz_brief_description(
-                    title=lot.title or "",
-                    description=f"{lot.description or ''} {lot.detailed_description or ''}".strip(),
-                    level_override=zzz_params.get("level_raw", 0),
-                    server_override=lot.region or "Europe",
-                )
-            except Exception as _e:
-                logger.warning(f"ZZZ brief failed: {_e}")
-                brief_description = (lot.title or "")[:200]
-            logger.info(f"ZZZ brief (generated): {brief_description!r}")
-            logger.info(f"ZZZ full  (FunPay):    {description[:80]!r}")
-        elif "eve" in game_cfg["name"].lower():
-            # EVE — полное как на FunPay, краткое генерируем через eve_slots
-            description = lot.detailed_description or lot.description or lot.title or ""
-            try:
-                from eve_slots import generate_eve_brief_description
-                brief_description = generate_eve_brief_description(
-                    title=lot.title or "",
-                    description=f"{lot.description or ''} {lot.detailed_description or ''}".strip(),
-                )
-            except Exception as _e:
-                logger.warning(f"EVE brief failed: {_e}")
-                brief_description = ""
-            logger.info(f"EVE brief (generated): {brief_description!r}")
-            logger.info(f"EVE full  (FunPay):    {description[:80]!r}")
-        elif "throne" in game_cfg["name"].lower() or "liberty" in game_cfg["name"].lower():
-            # TL — полное как на FunPay, краткое генерируем через tl_slots
-            description = lot.detailed_description or lot.description or lot.title or ""
-            try:
-                from tl_slots import generate_tl_brief_description
-                brief_description = generate_tl_brief_description(
-                    title=lot.title or "",
-                    description=f"{lot.description or ''} {lot.detailed_description or ''}".strip(),
-                    server_g2g=server_g2g,
-                )
-            except Exception as _e:
-                logger.warning(f"TL brief failed: {_e}")
-                brief_description = ""
-            logger.info(f"TL brief (generated): {brief_description!r}")
-            logger.info(f"TL full  (FunPay):    {description[:80]!r}")
-        elif "black desert" in game_cfg["name"].lower():
-            # BDO — полное как на FunPay, краткое генерируем через bdo_slots
-            description = lot.detailed_description or lot.description or lot.title or ""
-            try:
-                from bdo_slots import generate_bdo_brief_description
-                brief_description = generate_bdo_brief_description(
-                    title=lot.title or "",
-                    description=f"{lot.description or ''} {lot.detailed_description or ''}".strip(),
-                    level=lot.level or 0,
-                    bdo_class=bdo_class_g2g,
-                )
-            except Exception as _e:
-                logger.warning(f"BDO brief failed: {_e}")
-                brief_description = ""
-            logger.info(f"BDO brief (generated): {brief_description!r}")
-            logger.info(f"BDO full  (FunPay):    {description[:80]!r}")
-        elif "summoners" in game_cfg["name"].lower():
-            # SW — полное как на FunPay, краткое генерируем через sw_slots
-            description = lot.detailed_description or lot.description or lot.title or ""
-            try:
-                from sw_slots import generate_sw_title
-                brief_description = generate_sw_title(
-                    title=lot.title or "",
-                    description=f"{lot.description or ''} {lot.detailed_description or ''}".strip(),
-                )
-            except Exception as _e:
-                logger.warning(f"SW brief failed: {_e}")
-                brief_description = (lot.title or "")[:200]
-            logger.info(f"SW brief (generated): {brief_description!r}")
-            logger.info(f"SW full  (FunPay):    {description[:80]!r}")
+            _ai_extra = f"Level: {zzz_params.get('level_raw',0)}, Server: {lot.region or 'Europe'}"
         elif "warframe" in game_cfg["name"].lower():
-            description = lot.detailed_description or lot.description or lot.title or ""
-            try:
-                brief_description = warframe_slots.generate_warframe_brief(
-                    rank=lot.rank or 0,
-                    original_brief=lot.description or "",
-                )
-            except Exception as _e:
-                logger.warning(f"WF brief failed: {_e}")
-                brief_description = (lot.description or "")[:200]
-            logger.info(f"WF brief (generated): {brief_description!r}")
-            logger.info(f"WF full  (FunPay):    {description[:80]!r}")
+            _ai_extra = f"MR: {lot.rank or 0}, Platform: {lot.platform or 'PC'}"
         elif "drakensang" in game_cfg["name"].lower():
-            description = lot.detailed_description or lot.description or lot.title or ""
-            try:
-                brief_description = drakensang_slots.generate_dso_brief(
-                    level=lot.level or 0,
-                    dso_class=dso_class_g2g,
-                    server=dso_server_g2g,
-                    original_brief=lot.description or "",
-                    detailed=lot.detailed_description or "",
-                )
-            except Exception as _e:
-                logger.warning(f"DSO brief failed: {_e}")
-                brief_description = (lot.description or "")[:200]
-            logger.info(f"DSO brief (generated): {brief_description!r}")
-            logger.info(f"DSO full  (FunPay):    {description[:80]!r}")
-        elif game_cfg.get("is_roblox"):
-            # Roblox — оба поля description как на FunPay, без изменений
-            description = lot.detailed_description or lot.description or lot.title or ""
+            _ai_extra = f"Level: {lot.level or 0}, Class: {dso_class_g2g}, Server: {dso_server_g2g}"
+        elif "black desert" in game_cfg["name"].lower():
+            _ai_extra = f"Level: {lot.level or 0}, Class: {bdo_class_g2g}"
+
+        # Roblox — без brief, оставляем как есть
+        if game_cfg.get("is_roblox"):
             brief_description = description[:200]
-            logger.info(f"RBL full  (FunPay): {description[:80]!r}")
+            logger.info(f"RBL full (FunPay): {description[:80]!r}")
         else:
-            # Raid:
-            # полное = точно как на FunPay (detailed_description), без изменений
-            # краткое = наша генерация: Power | CB key | heroes | Mythic xN | Legendary xN
-            from description_generator import generate_brief_description_raid
-            description       = lot.detailed_description or lot.description or lot.title or ""
-            brief_description = generate_brief_description_raid(
-                title=lot.title,
-                description=lot.description,
-                detailed_description=lot.detailed_description,
-                leg=lot.l_heroes,
-                myth=lot.m_heroes,
-            ) or ""
+            # 1. Пробуем AI
+            _ai_source = f"{lot.title or ''}\n{lot.description or ''}\n{lot.detailed_description or ''}".strip()
+            brief_description = generate_brief_ai(
+                game_name=game_cfg["name"],
+                description=_ai_source,
+                extra_context=_ai_extra,
+                api_key=_claude_api_key,
+            )
+
+            # 2. Fallback на старую логику если AI недоступен
+            if not brief_description:
+                logger.info(f"AI brief недоступен — используем старую логику")
+                if game_cfg.get("region"):
+                    brief_description = ""
+                elif "zenless" in game_cfg["name"].lower():
+                    try:
+                        from zzz_slots import generate_zzz_brief_description
+                        brief_description = generate_zzz_brief_description(
+                            title=lot.title or "",
+                            description=f"{lot.description or ''} {lot.detailed_description or ''}".strip(),
+                            level_override=zzz_params.get("level_raw", 0),
+                            server_override=lot.region or "Europe",
+                        )
+                    except Exception as _e:
+                        brief_description = (lot.title or "")[:200]
+                elif "eve" in game_cfg["name"].lower():
+                    try:
+                        from eve_slots import generate_eve_brief_description
+                        brief_description = generate_eve_brief_description(
+                            title=lot.title or "",
+                            description=f"{lot.description or ''} {lot.detailed_description or ''}".strip(),
+                        )
+                    except Exception:
+                        brief_description = ""
+                elif "throne" in game_cfg["name"].lower() or "liberty" in game_cfg["name"].lower():
+                    try:
+                        from tl_slots import generate_tl_brief_description
+                        brief_description = generate_tl_brief_description(
+                            title=lot.title or "",
+                            description=f"{lot.description or ''} {lot.detailed_description or ''}".strip(),
+                            server_g2g=server_g2g,
+                        )
+                    except Exception:
+                        brief_description = ""
+                elif "black desert" in game_cfg["name"].lower():
+                    try:
+                        from bdo_slots import generate_bdo_brief_description
+                        brief_description = generate_bdo_brief_description(
+                            title=lot.title or "",
+                            description=f"{lot.description or ''} {lot.detailed_description or ''}".strip(),
+                            level=lot.level or 0,
+                            bdo_class=bdo_class_g2g,
+                        )
+                    except Exception:
+                        brief_description = ""
+                elif "summoners" in game_cfg["name"].lower():
+                    try:
+                        from sw_slots import generate_sw_title
+                        brief_description = generate_sw_title(
+                            title=lot.title or "",
+                            description=f"{lot.description or ''} {lot.detailed_description or ''}".strip(),
+                        )
+                    except Exception:
+                        brief_description = (lot.title or "")[:200]
+                elif "warframe" in game_cfg["name"].lower():
+                    try:
+                        brief_description = warframe_slots.generate_warframe_brief(
+                            rank=lot.rank or 0,
+                            original_brief=lot.description or "",
+                        )
+                    except Exception:
+                        brief_description = (lot.description or "")[:200]
+                elif "drakensang" in game_cfg["name"].lower():
+                    try:
+                        brief_description = drakensang_slots.generate_dso_brief(
+                            level=lot.level or 0,
+                            dso_class=dso_class_g2g,
+                            server=dso_server_g2g,
+                            original_brief=lot.description or "",
+                            detailed=lot.detailed_description or "",
+                        )
+                    except Exception:
+                        brief_description = (lot.description or "")[:200]
+                else:
+                    # Raid
+                    from description_generator import generate_brief_description_raid
+                    brief_description = generate_brief_description_raid(
+                        title=lot.title,
+                        description=lot.description,
+                        detailed_description=lot.detailed_description,
+                        leg=lot.l_heroes,
+                        myth=lot.m_heroes,
+                    ) or ""
+
+            logger.info(f"Brief: {brief_description!r}")
+            logger.info(f"Full (FunPay): {description[:80]!r}")
             logger.info(f"Raid brief (generated): {brief_description!r}")
             logger.info(f"Raid full  (FunPay):    {description[:80]!r}")
         # Build game_handler — function called during G2G form filling
@@ -1286,8 +1282,12 @@ async def main():
     # Миграция старых used_lots файлов (однократно)
     storage.migrate_legacy_used_lots()
 
-    bot_proxy  = parse_proxy(config.get("bot_proxy", ""))
-    imgur_proxy = config.get("imgur_proxy", "")
+    bot_proxy    = parse_proxy(config.get("bot_proxy", ""))
+    imgur_proxy  = config.get("imgur_proxy", "")
+    global _claude_api_key
+    _claude_api_key = config.get("claude_api_key", "")
+    if _claude_api_key:
+        logger.info("AI brief: Claude API key загружен")
 
     if bot_proxy:
         logger.info(f"Bot proxy: {config.get('bot_proxy', '')}")

@@ -1227,17 +1227,24 @@ async def run_scan_orphans(g2g, games: list):
                 logger.error(f"Ошибка загрузки страницы {page_num}: {e}")
                 break
 
-            # Debug: log a snippet of the page to understand structure
+            # Debug: dump ALL links and first lot row HTML
             debug_info = await browser_page.evaluate(r"""
                 () => {
                     const url = window.location.href;
-                    const bodyText = (document.body.innerText || '').slice(0, 300);
-                    const links = [...document.querySelectorAll('a[href]')]
-                        .map(a => a.href).filter(h => h.includes('/offers/')).slice(0, 5);
-                    return {url, bodyText, links};
+                    // All hrefs on page
+                    const allLinks = [...document.querySelectorAll('a[href]')].map(a => a.href).slice(0, 10);
+                    // First element that might be a lot row
+                    const rowEl = document.querySelector('[class*="offer-row"], [class*="listing-row"], [class*="offer-item"], [class*="manage"], [class*="table"] tr:nth-child(2)');
+                    const rowHtml = rowEl ? rowEl.outerHTML.slice(0, 800) : 'NOT FOUND';
+                    // All data attributes on first 3 links
+                    const dataAttrs = [...document.querySelectorAll('[data-id], [data-offer-id], [data-offer]')].slice(0,3).map(el => ({tag: el.tagName, data: Object.assign({}, el.dataset), text: (el.innerText||'').slice(0,40)}));
+                    return {url, allLinks, rowHtml, dataAttrs};
                 }
             """)
-            logger.info(f"  [debug] url={debug_info.get('url','')} | links_sample={debug_info.get('links',[])} | text[:300]={debug_info.get('bodyText','')[:300]!r}")
+            logger.info(f"  [debug] url={debug_info.get('url','')}")
+            logger.info(f"  [debug] allLinks={debug_info.get('allLinks', [])}")
+            logger.info(f"  [debug] rowHtml={debug_info.get('rowHtml','')!r}")
+            logger.info(f"  [debug] dataAttrs={debug_info.get('dataAttrs', [])}")
 
             # Извлекаем все G2G ID и заголовки со страницы
             rows_data = await browser_page.evaluate(r"""

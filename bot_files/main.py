@@ -1213,8 +1213,16 @@ async def run_scan_orphans(g2g, games: list):
         while True:
             url = f"{BASE_URL}&brand_id={brand_id}&page={page_num}"
             try:
-                await browser_page.goto(url, wait_until="domcontentloaded", timeout=40000)
-                await asyncio.sleep(2.5)
+                await browser_page.goto(url, wait_until="networkidle", timeout=45000)
+                # Wait for at least one offer link to appear (Vue.js renders after network)
+                try:
+                    await browser_page.wait_for_selector(
+                        "a[href*='/offers/'], table, [class*='offer'], [class*='list-item']",
+                        timeout=8000,
+                    )
+                except Exception:
+                    pass
+                await asyncio.sleep(1.5)
             except Exception as e:
                 logger.error(f"Ошибка загрузки страницы {page_num}: {e}")
                 break

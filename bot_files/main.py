@@ -75,8 +75,9 @@ def show_menu(games: list) -> str:
     print(f"  0. Очистить лоты")
     print(f"  p. Проверить цены")
     print(f"  m. Мигрировать/проверить ID (диагностика)")
+    print(f"  s. Найти сироты (G2G есть, lot_pairs нет)")
     print(f"{'='*40}")
-    valid = [str(i) for i in range(len(games) + 1)] + ["p", "m"]
+    valid = [str(i) for i in range(len(games) + 1)] + ["p", "m", "s"]
     while True:
         choice = input("Выбери номер: ").strip().lower()
         if choice in valid:
@@ -1158,6 +1159,170 @@ async def run_cleanup(g2g: G2GBot, funpay: FunPayScraper, context=None,
     logger.info(f"{'='*50}")
 
 
+async def run_scan_orphans(g2g, games: list):
+    """
+    Сканирует G2G Manage страницу и находит лоты которые есть на G2G
+    но отсутствуют в lot_pairs.json ('сироты').
+    Для каждой игры фильтрует Manage по названию игры через поиск.
+    """
+    print(f"\n{'='*45}")
+    print(f"  Поиск сирот (G2G есть, lot_pairs нет)")
+    print(f"{'='*45}")
+    for i, g in enumerate(games, 1):
+        print(f"  {i}. {g['name']}")
+    print(f"  0. Все игры")
+    print(f"{'='*45}")
+    choice = input("Выбери игру (или 0 для всех): ").strip()
+
+    if choice == "0":
+        selected_games = games
+    elif choice.isdigit() and 1 <= int(choice) <= len(games):
+        selected_games = [games[int(choice) - 1]]
+    else:
+        logger.warning("Неверный выбор")
+        return
+
+    page = await g2g._get_page()
+    all_orphans: list[tuple[str, str, str]] = []  # (game, g2g_id, title)
+
+    for game_cfg in selected_games:
+        game_name = game_cfg["name"]
+        pairs = storage.load_lot_pairs(game_name)
+        known_ids = {p.get("g2g_id", "") for p in pairs if p.get("g2g_id")}
+        logger.info(f"\n{'='*45}")
+        logger.info(f"Сканируем [{game_name}] — известно {len(known_ids)} ID в lot_pairs")
+
+        # Открываем Manage с поиском по названию игры
+        manage_url = (
+            "https://www.g2g.com/offers/list"
+            "?cat_id=5830014a-b974-45c6-9672-b51e83112fb7&status=live"
+        )
+        try:
+            await page.goto(manage_url, wait_until="domcontentloaded", timeout=40000)
+            await asyncio.sleep(3)
+        except Exception as e:
+            logger.error(f"Ошибка открытия Manage: {e}")
+            continue
+
+        # Фильтруем по игре через dropdown если есть
+        try:
+            # Ищем dropdown с играми (показывает "Accounts (457)" или название игры)
+            brand_btns = await page.query_selector_all("button.g-btn-select, .q-btn-dropdown")
+            for btn in brand_btns:
+                txt = (await btn.inner_text()).strip()
+                if "accounts" in txt.lower() or "wow" in txt.lower() or "raid" in txt.lower():
+                    await btn.click()
+                    await asyncio.sleep(1.5)
+                    # Ищем нужную игру в списке
+                    items = await page.query_selector_all(".q-item, .q-item__label")
+                    for item in items:
+                        item_txt = (await item.inner_text()).strip()
+                        # Берём первые 15 символов названия для поиска
+                        search_key = game_name[:15].lower()
+                        if search_key in item_txt.lower():
+                            await item.click()
+                            logger.info(f"Выбрана игра в фильтре: {item_txt!r}")
+                            await asyncio.sleep(2)
+                            break
+                    break
+        except Exception as e:
+            logger.warning(f"Фильтр игры не применён: {e}")
+
+        # Собираем все G2G ID со всех страниц
+        game_ids: list[tuple[str, str]] = []  # (g2g_id, title)
+        page_num = 0
+        while True:
+            page_num += 1
+            await asyncio.sleep(2)
+
+            # Извлекаем ID и заголовки из строк таблицы
+            rows_data = await page.evaluate(r"""
+                () => {
+                    const results = [];
+                    // Ищем все ID вида #GXXXXXXXXXXX в тексте страницы
+                    const allText = document.body.innerText;
+                    const rows = document.querySelectorAll('tr, .offer-row, [class*="offer"]');
+                    rows.forEach(row => {
+                        const txt = row.innerText || '';
+                        const m = txt.match(/#(G[A-Z0-9]{8,})/);
+                        if (m) {
+                            const lines = txt.split('\n').map(s => s.trim()).filter(Boolean);
+                            const title = lines[0] || '';
+                            results.push({id: m[1], title: title});
+                        }
+                    });
+                    // Fallback: ищем паттерн прямо в тексте всей страницы
+                    if (results.length === 0) {
+                        const matches = [...allText.matchAll(/#(G[A-Z0-9]{8,})/g)];
+                        matches.forEach(m => results.push({id: m[1], title: ''}));
+                    }
+                    return results;
+                }
+            """)
+
+            found_on_page = 0
+            for row in rows_data:
+                gid = row.get("id", "")
+                gtitle = row.get("title", "")
+                if gid and (gid, gtitle) not in game_ids:
+                    game_ids.append((gid, gtitle))
+                    found_on_page += 1
+
+            logger.info(f"  Страница {page_num}: найдено {found_on_page} ID (всего {len(game_ids)})")
+
+            # Пробуем перейти на следующую страницу
+            try:
+                next_btn = await page.query_selector(
+                    "button[aria-label='Next page'], .q-pagination__next, "
+                    "button:has-text('›'), button:has-text('Next')"
+                )
+                if next_btn:
+                    disabled = await next_btn.get_attribute("disabled")
+                    aria_disabled = await next_btn.get_attribute("aria-disabled")
+                    if disabled is not None or aria_disabled == "true":
+                        break
+                    await next_btn.click()
+                    await asyncio.sleep(2.5)
+                else:
+                    break
+            except Exception:
+                break
+
+            if page_num > 50:  # защита от бесконечного цикла
+                break
+
+        logger.info(f"[{game_name}] Всего на G2G: {len(game_ids)} | В lot_pairs: {len(known_ids)}")
+
+        # Находим сирот
+        orphans = [(gid, gtitle) for gid, gtitle in game_ids if gid not in known_ids]
+        logger.info(f"[{game_name}] Сирот (есть на G2G, нет в lot_pairs): {len(orphans)}")
+        for gid, gtitle in orphans:
+            logger.info(f"  СИРОТА: {gid} | {gtitle[:70]}")
+            all_orphans.append((game_name, gid, gtitle))
+
+    # Итог
+    print(f"\n{'='*45}")
+    print(f"  Итого сирот найдено: {len(all_orphans)}")
+    print(f"{'='*45}")
+    for game_name, gid, gtitle in all_orphans:
+        print(f"  [{game_name}] {gid} | {gtitle[:60]}")
+
+    if all_orphans:
+        answer = input(f"\nУдалить все {len(all_orphans)} сирот с G2G? (y/n): ").strip().lower()
+        if answer == "y":
+            for idx, (game_name, gid, gtitle) in enumerate(all_orphans, 1):
+                logger.info(f"[{idx}/{len(all_orphans)}] Удаляем сироту {gid}...")
+                deleted = await g2g.delete_lot(gid)
+                if deleted:
+                    logger.info(f"  {gid} удалён OK")
+                else:
+                    logger.warning(f"  {gid} не удалось удалить")
+                await asyncio.sleep(1.5)
+            logger.info("Удаление сирот завершено!")
+        else:
+            logger.info("Удаление отменено")
+
+
 async def run_migrate_verify_ids(g2g: G2GBot):
     """
     Миграция/проверка существующих пар из lot_pairs.json.
@@ -1391,6 +1556,11 @@ async def main():
             logger.info("Запускаем миграцию/проверку ID лотов...")
             await run_migrate_verify_ids(g2g)
             logger.info("Миграция завершена!")
+            input("Нажми Enter чтобы закрыть...")
+
+        elif choice == "s":
+            logger.info("Запускаем поиск сирот...")
+            await run_scan_orphans(g2g, games)
             input("Нажми Enter чтобы закрыть...")
 
         elif choice == "p":

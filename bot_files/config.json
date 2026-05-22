@@ -577,7 +577,13 @@
       "title_blacklist": [],
       "blacklist_whitelist": [],
       "seller_blacklist": [],
-      "builtin_blacklist": [],
+      "builtin_blacklist": [
+        "(na)",
+        "(sa)",
+        "(sea)",
+        "(east asia)",
+        "(oceania)"
+      ],
       "price_tiers": [
         { "min": 0,    "max": 100,   "multiplier": 1.8  },
         { "min": 100,  "max": 200,   "multiplier": 1.49 },

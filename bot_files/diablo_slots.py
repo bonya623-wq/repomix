@@ -3,7 +3,7 @@ diablo_slots.py — Diablo Immortal helper functions.
 Server/class mapping FunPay → G2G, level tier, brief generation.
 """
 
-# FunPay server name (lowercase) → G2G display name
+# FunPay server name (lowercase, без "(EU) " префикса) → G2G display name
 FUNPAY_TO_G2G_SERVER = {
     "akeba":            "Akeba",
     "ammuit":           "Ammuit",
@@ -21,6 +21,7 @@ FUNPAY_TO_G2G_SERVER = {
     "talus'ar":         "Talus' Ar",
     "talus' ar":        "Talus' Ar",
     "talus ar":         "Talus' Ar",
+    "the countess":     "The Countess",
     "vizjerei":         "Vizjerei",
     "zatham":           "Zatham",
 }
@@ -52,7 +53,11 @@ FUNPAY_TO_G2G_CLASS = {
 
 
 def get_di_server(funpay_server: str) -> str:
-    return FUNPAY_TO_G2G_SERVER.get(funpay_server.strip().lower(), "")
+    s = funpay_server.strip().lower()
+    # FunPay префиксирует серверы "(EU) " — убираем перед поиском
+    if s.startswith("(eu) "):
+        s = s[5:]
+    return FUNPAY_TO_G2G_SERVER.get(s, "")
 
 
 def get_di_class(funpay_class: str) -> str:

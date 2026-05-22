@@ -221,6 +221,7 @@
       "name": "WOW Classic Era / Seasonal / TBC Anniversary",
       "enabled": true,
       "region": "EU",
+      "g2g_manage_brand_id": "lgc_game_27816",
       "funpay_price_factor": 0.86,
       "funpay_url": "https://funpay.com/en/lots/492/",
       "price_multiplier": 1.5,

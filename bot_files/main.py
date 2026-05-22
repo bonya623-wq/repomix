@@ -1543,7 +1543,20 @@ async def main():
         if bot_proxy:
             launch_kwargs["proxy"] = bot_proxy
 
-        context = await pw.chromium.launch_persistent_context(**launch_kwargs)
+        try:
+            context = await pw.chromium.launch_persistent_context(**launch_kwargs)
+        except Exception as _launch_err:
+            if "closed" in str(_launch_err).lower() or "target" in str(_launch_err).lower():
+                print("\n" + "="*55)
+                print("  ОШИБКА: браузер закрылся сразу после запуска.")
+                print("  Скорее всего основной бот уже запущен и держит")
+                print("  папку browser_profile.")
+                print("  → Останови основной бот, потом запусти снова.")
+                print("="*55 + "\n")
+            else:
+                print(f"\nОшибка запуска браузера: {_launch_err}\n")
+            input("Нажми Enter чтобы закрыть...")
+            return
 
         funpay = FunPayScraper(context, imgur_proxy=imgur_proxy)
         g2g    = G2GBot(context)

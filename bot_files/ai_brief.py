@@ -67,6 +67,17 @@ _GAME_HINTS = {
     ),
     "warframe":    "Focus on: Mastery Rank (MR), platinum, Prime Vault, key mods",
     "drakensang":  "Focus on: named sets (Dragan/BGH/Winter/Guardian etc.), Knowledge points, level, class",
+    "diablo":      (
+        "Strict priority order for Diablo Immortal account listings:\n"
+        "1. Combat Rating (CR) — e.g. 'CR 5500', 'CR 4800' — FIRST, most important\n"
+        "2. Resonance — e.g. 'Res 4200', 'Resonance 3800' — second most important\n"
+        "3. Class — e.g. 'Necromancer', 'Blood Knight', 'Barbarian'\n"
+        "4. 5-star legendary gems — e.g. '2x 5★', '5★ Voidgemstone' — if mentioned\n"
+        "5. Paragon level — e.g. 'Paragon 650', 'P850'\n"
+        "6. Key sets/gear — e.g. 'Shepherd set', 'Hailstone' — if mentioned\n"
+        "7. Server — LAST\n"
+        "Skip: account security, delivery info, payment methods."
+    ),
 }
 
 

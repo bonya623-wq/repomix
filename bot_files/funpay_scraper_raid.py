@@ -83,6 +83,7 @@ POSTIMAGES_GALLERY_HEX = {
     "rbl":       "14stMdJ",
     "warframe":   "mbMXTds",
     "drakensang": "GvdF4Jm",
+    "diablo":     "",
 }
 
 

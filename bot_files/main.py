@@ -23,6 +23,8 @@ import games.warframe_game as wf_game
 import warframe_slots
 import games.drakensang_game as dso_game
 import drakensang_slots
+import games.diablo_game as di_game
+import diablo_slots
 from ai_brief import generate_brief_ai
 import storage
 
@@ -331,6 +333,17 @@ async def run_pass(funpay: FunPayScraper, g2g: G2GBot, game_cfg: dict, is_first_
                 continue
             logger.info(f"DSO: server={dso_server_g2g!r} class={dso_class_g2g!r} level={dso_level}")
 
+        elif "diablo" in game_cfg["name"].lower():
+            di_server_g2g = diablo_slots.get_di_server(lot.server or "")
+            di_class_g2g  = diablo_slots.get_di_class(lot.char_class or "")
+            di_level      = lot.level or 0
+            if not di_server_g2g:
+                logger.warning(f"DI: сервер '{lot.server}' не поддерживается — пропускаем")
+                storage.save_used_lot(lot.lot_id, game_name)
+                used_lots.add(lot.lot_id)
+                continue
+            logger.info(f"DI: server={di_server_g2g!r} class={di_class_g2g!r} level={di_level}")
+
         # Generate unique title — shuffle segments of lot.title (same as Raid)
         _orig_title = (lot.title or "").strip()
         _description = (lot.detailed_description or lot.description or "").strip()
@@ -423,6 +436,8 @@ async def run_pass(funpay: FunPayScraper, g2g: G2GBot, game_cfg: dict, is_first_
             _ai_extra = f"MR: {lot.rank or 0}, Platform: {lot.platform or 'PC'}"
         elif "drakensang" in game_cfg["name"].lower():
             _ai_extra = f"Level: {lot.level or 0}, Class: {dso_class_g2g}, Server: {dso_server_g2g}"
+        elif "diablo" in game_cfg["name"].lower():
+            _ai_extra = f"Level: {di_level}, Class: {di_class_g2g}, Server: {di_server_g2g}"
         elif "black desert" in game_cfg["name"].lower():
             _ai_extra = f"Level: {lot.level or 0}, Class: {bdo_class_g2g}, Server: {server_g2g}"
         elif "eve" in game_cfg["name"].lower():
@@ -537,6 +552,13 @@ async def run_pass(funpay: FunPayScraper, g2g: G2GBot, game_cfg: dict, is_first_
                         )
                     except Exception:
                         brief_description = (lot.description or "")[:200]
+                elif "diablo" in game_cfg["name"].lower():
+                    # Fallback: class + level + server
+                    _di_parts = []
+                    if di_class_g2g:  _di_parts.append(di_class_g2g)
+                    if di_level:      _di_parts.append(f"Lv{di_level}")
+                    if di_server_g2g: _di_parts.append(di_server_g2g)
+                    brief_description = " | ".join(_di_parts)
                 else:
                     # Raid
                     from description_generator import generate_brief_description_raid
@@ -617,6 +639,15 @@ async def run_pass(funpay: FunPayScraper, g2g: G2GBot, game_cfg: dict, is_first_
             }
             async def game_handler(page, bot, _cfg=game_cfg, _dp=_dso_params):
                 return await dso_game.fill_form(page, bot, _cfg, _dp)
+        elif "diablo" in game_cfg["name"].lower():
+            _di_params = {
+                "region":     "EU",
+                "server":     di_server_g2g,
+                "level_tier": diablo_slots.di_level_tier(di_level),
+                "di_class":   di_class_g2g,
+            }
+            async def game_handler(page, bot, _cfg=game_cfg, _dip=_di_params):
+                return await di_game.fill_form(page, bot, _cfg, _dip)
         elif game_cfg.get("is_roblox"):
             _rbl_params = {"g2g_game_name": game_cfg.get("g2g_game_name", "")}
             async def game_handler(page, bot, _cfg=game_cfg, _rp=_rbl_params):

@@ -564,7 +564,7 @@
     },
     {
       "name": "Diablo Immortal",
-      "enabled": false,
+      "enabled": true,
       "funpay_url": "https://funpay.com/en/lots/1010/",
       "funpay_region_filter": "",
       "price_multiplier": 1.6,

@@ -1219,31 +1219,48 @@ async def run_scan_orphans(g2g, games: list):
                 logger.error(f"Ошибка загрузки страницы {page_num}: {e}")
                 break
 
+            # Debug: log a snippet of the page to understand structure
+            debug_info = await browser_page.evaluate(r"""
+                () => {
+                    const url = window.location.href;
+                    const bodyText = (document.body.innerText || '').slice(0, 300);
+                    const links = [...document.querySelectorAll('a[href]')]
+                        .map(a => a.href).filter(h => h.includes('/offers/')).slice(0, 5);
+                    return {url, bodyText, links};
+                }
+            """)
+            logger.info(f"  [debug] url={debug_info.get('url','')} | links_sample={debug_info.get('links',[])} | text[:300]={debug_info.get('bodyText','')[:300]!r}")
+
             # Извлекаем все G2G ID и заголовки со страницы
             rows_data = await browser_page.evaluate(r"""
                 () => {
                     const results = [];
                     const seen = new Set();
-                    // Ищем строки таблицы с ID вида #GXXXXXXXXXX
-                    const allNodes = document.querySelectorAll('td, tr, [class*="row"], [class*="item"]');
-                    allNodes.forEach(node => {
-                        const txt = node.innerText || '';
-                        const m = txt.match(/#(G[A-Z0-9]{8,})/);
-                        if (m && !seen.has(m[1])) {
-                            seen.add(m[1]);
-                            const lines = txt.split('\n').map(s => s.trim()).filter(Boolean);
-                            results.push({id: m[1], title: lines[0] || ''});
+                    const idRe = /[\/=](G[A-Z0-9]{8,})/i;
+
+                    // Method 1: href links containing lot IDs (/offers/GXXXXXXXX or ?offer_id=GXXXXXXXX)
+                    document.querySelectorAll('a[href]').forEach(a => {
+                        const href = a.href || '';
+                        const m = href.match(/[\/=](G[A-Z0-9]{8,})/i);
+                        if (m) {
+                            const gid = m[1].toUpperCase();
+                            if (!seen.has(gid)) {
+                                seen.add(gid);
+                                results.push({id: gid, title: (a.innerText || a.title || '').trim()});
+                            }
                         }
                     });
-                    // Fallback по всему тексту страницы
+
+                    // Method 2: text nodes with #GXXXXXXXX
                     if (results.length === 0) {
-                        const allText = document.body.innerText;
-                        const matches = [...allText.matchAll(/#(G[A-Z0-9]{8,})/g)];
-                        const seen2 = new Set();
+                        const allText = document.body.innerText || '';
+                        const matches = [...allText.matchAll(/#?(G[A-Z0-9]{8,})/g)];
                         matches.forEach(m => {
-                            if (!seen2.has(m[1])) { seen2.add(m[1]); results.push({id: m[1], title: ''}); }
+                            const gid = m[1].toUpperCase();
+                            if (!seen.has(gid)) { seen.add(gid); results.push({id: gid, title: ''}); }
                         });
                     }
+
                     return results;
                 }
             """)

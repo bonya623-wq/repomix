@@ -75,9 +75,8 @@ def show_menu(games: list) -> str:
     print(f"  0. Очистить лоты")
     print(f"  p. Проверить цены")
     print(f"  m. Мигрировать/проверить ID (диагностика)")
-    print(f"  s. Найти сироты (G2G есть, lot_pairs нет)")
     print(f"{'='*40}")
-    valid = [str(i) for i in range(len(games) + 1)] + ["p", "m", "s"]
+    valid = [str(i) for i in range(len(games) + 1)] + ["p", "m"]
     while True:
         choice = input("Выбери номер: ").strip().lower()
         if choice in valid:
@@ -1159,179 +1158,6 @@ async def run_cleanup(g2g: G2GBot, funpay: FunPayScraper, context=None,
     logger.info(f"{'='*50}")
 
 
-async def run_scan_orphans(g2g, games: list):
-    """
-    Сканирует G2G Manage по URL (page=1,2,3...) и находит лоты
-    которые есть на G2G но отсутствуют в lot_pairs.json ('сироты').
-    Требует g2g_manage_brand_id в конфиге игры.
-    """
-    BASE_URL = (
-        "https://www.g2g.com/offers/list"
-        "?cat_id=5830014a-b974-45c6-9672-b51e83112fb7"
-        "&status=live"
-    )
-
-    # Фильтруем только игры у которых есть brand_id
-    scannable = [g for g in games if g.get("g2g_manage_brand_id")]
-    if not scannable:
-        print("\nНи одна игра не имеет 'g2g_manage_brand_id' в config.json.")
-        print("Добавь например для WoW: \"g2g_manage_brand_id\": \"lgc_game_27816\"")
-        return
-
-    print(f"\n{'='*45}")
-    print(f"  Поиск сирот (G2G есть, lot_pairs нет)")
-    print(f"{'='*45}")
-    for i, g in enumerate(scannable, 1):
-        print(f"  {i}. {g['name']}")
-    print(f"  0. Все игры")
-    print(f"{'='*45}")
-    choice = input("Выбери игру (или 0 для всех): ").strip()
-
-    if choice == "0":
-        selected_games = scannable
-    elif choice.isdigit() and 1 <= int(choice) <= len(scannable):
-        selected_games = [scannable[int(choice) - 1]]
-    else:
-        logger.warning("Неверный выбор")
-        return
-
-    browser_page = await g2g._get_page()
-    all_orphans: list[tuple[str, str, str]] = []  # (game_name, g2g_id, title)
-
-    for game_cfg in selected_games:
-        game_name  = game_cfg["name"]
-        brand_id   = game_cfg["g2g_manage_brand_id"]
-        pairs      = storage.load_lot_pairs(game_name)
-        known_ids  = {p.get("g2g_id", "") for p in pairs if p.get("g2g_id")}
-
-        logger.info(f"\n{'='*45}")
-        logger.info(f"[{game_name}] brand_id={brand_id} | известно в lot_pairs: {len(known_ids)}")
-
-        game_ids: list[tuple[str, str]] = []  # (g2g_id, title)
-        page_num = 1
-
-        while True:
-            url = f"{BASE_URL}&brand_id={brand_id}&page={page_num}"
-            try:
-                await browser_page.goto(url, wait_until="networkidle", timeout=45000)
-                # Wait for at least one offer link to appear (Vue.js renders after network)
-                try:
-                    await browser_page.wait_for_selector(
-                        "a[href*='/offers/'], table, [class*='offer'], [class*='list-item']",
-                        timeout=8000,
-                    )
-                except Exception:
-                    pass
-                await asyncio.sleep(1.5)
-            except Exception as e:
-                logger.error(f"Ошибка загрузки страницы {page_num}: {e}")
-                break
-
-            # Debug: dump ALL links and first lot row HTML
-            debug_info = await browser_page.evaluate(r"""
-                () => {
-                    const url = window.location.href;
-                    // All hrefs on page
-                    const allLinks = [...document.querySelectorAll('a[href]')].map(a => a.href).slice(0, 10);
-                    // First element that might be a lot row
-                    const rowEl = document.querySelector('[class*="offer-row"], [class*="listing-row"], [class*="offer-item"], [class*="manage"], [class*="table"] tr:nth-child(2)');
-                    const rowHtml = rowEl ? rowEl.outerHTML.slice(0, 800) : 'NOT FOUND';
-                    // All data attributes on first 3 links
-                    const dataAttrs = [...document.querySelectorAll('[data-id], [data-offer-id], [data-offer]')].slice(0,3).map(el => ({tag: el.tagName, data: Object.assign({}, el.dataset), text: (el.innerText||'').slice(0,40)}));
-                    return {url, allLinks, rowHtml, dataAttrs};
-                }
-            """)
-            logger.info(f"  [debug] url={debug_info.get('url','')}")
-            logger.info(f"  [debug] allLinks={debug_info.get('allLinks', [])}")
-            logger.info(f"  [debug] rowHtml={debug_info.get('rowHtml','')!r}")
-            logger.info(f"  [debug] dataAttrs={debug_info.get('dataAttrs', [])}")
-
-            # Извлекаем все G2G ID и заголовки со страницы
-            rows_data = await browser_page.evaluate(r"""
-                () => {
-                    const results = [];
-                    const seen = new Set();
-                    const idRe = /[\/=](G[A-Z0-9]{8,})/i;
-
-                    // Method 1: href links containing lot IDs (/offers/GXXXXXXXX or ?offer_id=GXXXXXXXX)
-                    document.querySelectorAll('a[href]').forEach(a => {
-                        const href = a.href || '';
-                        const m = href.match(/[\/=](G[A-Z0-9]{8,})/i);
-                        if (m) {
-                            const gid = m[1].toUpperCase();
-                            if (!seen.has(gid)) {
-                                seen.add(gid);
-                                results.push({id: gid, title: (a.innerText || a.title || '').trim()});
-                            }
-                        }
-                    });
-
-                    // Method 2: text nodes with #GXXXXXXXX
-                    if (results.length === 0) {
-                        const allText = document.body.innerText || '';
-                        const matches = [...allText.matchAll(/#?(G[A-Z0-9]{8,})/g)];
-                        matches.forEach(m => {
-                            const gid = m[1].toUpperCase();
-                            if (!seen.has(gid)) { seen.add(gid); results.push({id: gid, title: ''}); }
-                        });
-                    }
-
-                    return results;
-                }
-            """)
-
-            found = 0
-            existing = {gid for gid, _ in game_ids}
-            for row in rows_data:
-                gid    = row.get("id", "")
-                gtitle = row.get("title", "")
-                if gid and gid not in existing:
-                    game_ids.append((gid, gtitle))
-                    existing.add(gid)
-                    found += 1
-
-            logger.info(f"  Страница {page_num}: +{found} ID (всего {len(game_ids)})")
-
-            if found == 0:
-                break  # пустая страница — достигли конца
-
-            page_num += 1
-            if page_num > 100:  # защита
-                break
-
-        logger.info(f"[{game_name}] Всего на G2G: {len(game_ids)} | В lot_pairs: {len(known_ids)}")
-
-        orphans = [(gid, gtitle) for gid, gtitle in game_ids if gid not in known_ids]
-        logger.info(f"[{game_name}] Сирот найдено: {len(orphans)}")
-        for gid, gtitle in orphans:
-            logger.info(f"  СИРОТА: {gid} | {gtitle[:70]}")
-            all_orphans.append((game_name, gid, gtitle))
-
-    # Итоговый отчёт
-    print(f"\n{'='*45}")
-    print(f"  Итого сирот: {len(all_orphans)}")
-    print(f"{'='*45}")
-    for game_name, gid, gtitle in all_orphans:
-        print(f"  [{game_name}] {gid} | {gtitle[:60]}")
-
-    if not all_orphans:
-        return
-
-    answer = input(f"\nУдалить все {len(all_orphans)} сирот с G2G? (y/n): ").strip().lower()
-    if answer == "y":
-        for idx, (game_name, gid, gtitle) in enumerate(all_orphans, 1):
-            logger.info(f"[{idx}/{len(all_orphans)}] Удаляем {gid}...")
-            deleted = await g2g.delete_lot(gid)
-            if deleted:
-                logger.info(f"  {gid} удалён OK")
-            else:
-                logger.warning(f"  {gid} не удалось удалить")
-            await asyncio.sleep(1.5)
-        logger.info("Удаление завершено!")
-    else:
-        logger.info("Удаление отменено")
-
-
 async def run_migrate_verify_ids(g2g: G2GBot):
     """
     Миграция/проверка существующих пар из lot_pairs.json.
@@ -1550,20 +1376,7 @@ async def main():
         if bot_proxy:
             launch_kwargs["proxy"] = bot_proxy
 
-        try:
-            context = await pw.chromium.launch_persistent_context(**launch_kwargs)
-        except Exception as _launch_err:
-            if "closed" in str(_launch_err).lower() or "target" in str(_launch_err).lower():
-                print("\n" + "="*55)
-                print("  ОШИБКА: браузер закрылся сразу после запуска.")
-                print("  Скорее всего основной бот уже запущен и держит")
-                print("  папку browser_profile.")
-                print("  → Останови основной бот, потом запусти снова.")
-                print("="*55 + "\n")
-            else:
-                print(f"\nОшибка запуска браузера: {_launch_err}\n")
-            input("Нажми Enter чтобы закрыть...")
-            return
+        context = await pw.chromium.launch_persistent_context(**launch_kwargs)
 
         funpay = FunPayScraper(context, imgur_proxy=imgur_proxy)
         g2g    = G2GBot(context)
@@ -1578,11 +1391,6 @@ async def main():
             logger.info("Запускаем миграцию/проверку ID лотов...")
             await run_migrate_verify_ids(g2g)
             logger.info("Миграция завершена!")
-            input("Нажми Enter чтобы закрыть...")
-
-        elif choice == "s":
-            logger.info("Запускаем поиск сирот...")
-            await run_scan_orphans(g2g, games)
             input("Нажми Enter чтобы закрыть...")
 
         elif choice == "p":

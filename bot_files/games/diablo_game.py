@@ -108,14 +108,11 @@ async def fill_form(page, bot, game_cfg: dict, di_params: dict) -> bool:
       level_tier — "60", "55+", "50+", ...
       di_class   — "Barbarian", "Blood Knight", etc.
     """
-    region     = di_params.get("region", "EU")
     server     = di_params.get("server", "")
     level_tier = di_params.get("level_tier", "")
     di_class   = di_params.get("di_class", "")
 
-    ok = await _pick_dropdown(page, "region", region)
-    if not ok:
-        logger.warning(f"DI: Region '{region}' не выбран — продолжаем")
+    # Region уже выбран g2g_bot._select_region до вызова game_handler
 
     if server:
         ok = await _pick_dropdown(page, "server", server)

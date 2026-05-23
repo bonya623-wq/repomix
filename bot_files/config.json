@@ -955,7 +955,7 @@
       "name": "Wuthering Waves",
       "enabled": true,
       "funpay_url": "https://funpay.com/en/lots/2390/",
-      "funpay_region_filter": "Europe",
+      "funpay_region_filter": "",
       "price_multiplier": 1.6,
       "min_funpay_price_usd": 10,
       "max_funpay_price_usd": 1500,

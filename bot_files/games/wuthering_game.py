@@ -92,15 +92,21 @@ async def _pick_dropdown(page, label_text: str, value: str, timeout: int = 8000)
 
 async def fill_form(page, bot, game_cfg: dict, ww_params: dict) -> bool:
     """
-    Fills G2G dropdowns for Wuthering Waves.
-
-    ww_params:
-      union_level — "80", "70+", "50+", "30+", "10+", "9 or below"
+    Fills G2G dropdowns for Wuthering Waves in order:
+      1. Platform  → PC
+      2. Server    → EU
+      3. Union Level (dynamic)
     """
     union_level = ww_params.get("union_level", "")
 
-    # Platform and Server are set via g2g_dropdowns in config
-    # Only Union Level needs dynamic selection
+    ok = await _pick_dropdown(page, "platform", "PC")
+    if not ok:
+        logger.warning("WW: Platform 'PC' не выбран — продолжаем")
+
+    ok = await _pick_dropdown(page, "server", "EU")
+    if not ok:
+        logger.warning("WW: Server 'EU' не выбран — продолжаем")
+
     if union_level:
         ok = await _pick_dropdown(page, "union level", union_level)
         if not ok:

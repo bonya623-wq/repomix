@@ -987,10 +987,7 @@
         { "min": 1000, "max": 1500,  "multiplier": 1.35 },
         { "min": 1500, "max": 99999, "multiplier": 1.33 }
       ],
-      "g2g_dropdowns": [
-        { "index": 0, "value": "PC" },
-        { "index": 1, "value": "EU" }
-      ]
+      "g2g_dropdowns": []
     },
     {
       "name": "Roblox",

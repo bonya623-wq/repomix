@@ -143,7 +143,8 @@ async def upload_to_postimages(image_path: str, context, game: str = "") -> Opti
                         for (const opt of sel.options) {{
                             if (opt.value === '{gallery_hex}' || opt.text.toLowerCase().includes('{gallery_hex}')) {{
                                 sel.value = opt.value;
-                                sel.dispatchEvent(new Event('change'));
+                                sel.dispatchEvent(new Event('input', {{bubbles: true}}));
+                                sel.dispatchEvent(new Event('change', {{bubbles: true}}));
                                 return opt.value + '|' + opt.text;
                             }}
                         }}
@@ -352,7 +353,7 @@ class FunPayScraper:
             await page.close()
 
     async def _upload_photo_aiohttp(self, image_path: str, game: str = "") -> Optional[str]:
-        """Быстрая загрузка фото на Postimages через aiohttp (без браузера)."""
+        """Загрузка фото на Postimages через aiohttp с куками из браузера."""
         gallery_hex = None
         game_lower = game.lower()
         for key, hex_val in POSTIMAGES_GALLERY_HEX.items():
@@ -366,20 +367,36 @@ class FunPayScraper:
             content_type = "image/jpeg" if ext in ("jpg", "jpeg") else f"image/{ext}"
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Referer": "https://postimages.org/web",
+                "Referer": "https://postimages.org/",
                 "Origin": "https://postimages.org",
                 "Accept": "application/json, text/javascript, */*; q=0.01",
                 "X-Requested-With": "XMLHttpRequest",
             }
-            cookies = {
-                "GUESTKEY": "muidn p85O9xYA3li4",
-                "SESSIONKEY": "a99ef415574e36289d27e44853c09e5927a5d4ce077da68ca8cb4de8457c2f09",
-            }
+
+            # Берём куки из браузера (там уже загружен cookies_postimages.json)
+            cookies = {}
+            try:
+                browser_cookies = await self.context.cookies(["https://postimages.org"])
+                cookies = {c["name"]: c["value"] for c in browser_cookies}
+            except Exception:
+                pass
+            # Фоллбэк: читаем файл напрямую
+            if not cookies:
+                cookies_file = Path(POSTIMAGES_COOKIES_FILE)
+                if cookies_file.exists():
+                    try:
+                        saved = _json.loads(cookies_file.read_text(encoding="utf-8"))
+                        cookies = {c["name"]: c["value"] for c in saved
+                                   if "postimages" in c.get("domain", "") or "postimg" in c.get("domain", "")}
+                    except Exception:
+                        pass
+
             endpoint = (
                 f"https://postimages.org/json/rr/{gallery_hex}"
                 if gallery_hex else
                 "https://postimages.org/web"
             )
+            logger.info(f"Postimages aiohttp: endpoint={endpoint}, cookies={list(cookies.keys())}")
             async with aiohttp.ClientSession(headers=headers, cookies=cookies) as session:
                 form = aiohttp.FormData()
                 form.add_field("file", img_bytes, filename=f"upload.{ext}", content_type=content_type)
@@ -407,8 +424,13 @@ class FunPayScraper:
             return None
 
     async def _upload_photo(self, image_path: str, game: str = "") -> Optional[str]:
-        """Браузер (Postimages), при неудаче — Imgur."""
+        """Браузер (Postimages) → aiohttp (Postimages) → Imgur."""
         url = await upload_to_postimages(image_path, self.context, game=game)
+        if url:
+            return url
+
+        logger.info("Postimages browser не сработал — пробуем aiohttp...")
+        url = await self._upload_photo_aiohttp(image_path, game=game)
         if url:
             return url
 

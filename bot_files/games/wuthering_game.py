@@ -1,9 +1,9 @@
 """
 games/wuthering_game.py — Wuthering Waves
-G2G form:
-  Platform   → PC
-  Server     → EU
-  Union Level→ 80 / 70+ / 50+ / 30+ / 10+ / 9 or below
+G2G form order:
+  [0] Platform   → PC
+  [1] Server     → EU
+  [2] Union Level→ 80 / 70+ / 50+ / 30+ / 10+ / 9 or below
 """
 import asyncio
 import logging
@@ -11,45 +11,21 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-async def _pick_dropdown(page, label_text: str, value: str, timeout: int = 8000) -> bool:
+async def _pick_by_index(page, btn_index: int, value: str, label: str, timeout: int = 8000) -> bool:
+    """Click the Nth g-btn-select button and pick a value from the dropdown."""
     try:
         try:
             await page.wait_for_selector(".q-inner-loading", state="hidden", timeout=5000)
         except Exception:
             pass
 
-        opened = False
-
-        # Method 1: find form-group by label text
-        groups = await page.query_selector_all(".r-form-group, .form-group")
-        for group in groups:
-            label = await group.query_selector("label, .form-label")
-            if not label:
-                continue
-            label_txt = (await label.inner_text()).strip().lower()
-            if label_text.lower() in label_txt:
-                btn = await group.query_selector("button.g-btn-select, button[class*='select']")
-                if btn:
-                    await btn.click()
-                    await asyncio.sleep(1.2)
-                    opened = True
-                    break
-
-        # Method 2: fallback — Union Level is LAST "Please select"
-        # Order: Platform(0) → Server(1) → Union Level(2)
-        if not opened:
-            btns = await page.query_selector_all("button.g-btn-select")
-            please = [btn for btn in btns
-                      if "please select" in (await btn.inner_text()).strip().lower()]
-            if please:
-                # Always click the LAST remaining "Please select" = Union Level
-                await please[-1].click()
-                await asyncio.sleep(1.2)
-                opened = True
-
-        if not opened:
-            logger.warning(f"WW: дропдаун '{label_text}' не найден")
+        btns = await page.query_selector_all("button.g-btn-select")
+        if btn_index >= len(btns):
+            logger.warning(f"WW: кнопка [{label}] (index={btn_index}) не найдена, всего кнопок: {len(btns)}")
             return False
+
+        await btns[btn_index].click()
+        await asyncio.sleep(1.2)
 
         try:
             await page.wait_for_selector(
@@ -60,56 +36,49 @@ async def _pick_dropdown(page, label_text: str, value: str, timeout: int = 8000)
             pass
         await asyncio.sleep(0.5)
 
-        # No filter input — directly pick from visible items
         items = await page.query_selector_all(
             ".q-virtual-scroll__content .q-item, .q-item--dense"
         )
         v_lower = value.lower()
         item_texts = [(item, (await item.inner_text()).strip()) for item in items]
 
+        # Exact match
         for item, t in item_texts:
             if t.lower() == v_lower:
                 await item.click()
-                logger.info(f"WW: '{label_text}' = '{t}' выбрано (точное)")
+                logger.info(f"WW: [{label}] = '{t}' выбрано (точное)")
                 await asyncio.sleep(0.5)
                 return True
 
+        # Partial match (shortest)
         partial = [(item, t) for item, t in item_texts if v_lower in t.lower()]
         if partial:
             item, t = min(partial, key=lambda x: len(x[1]))
             await item.click()
-            logger.info(f"WW: '{label_text}' = '{t}' выбрано (частичное)")
+            logger.info(f"WW: [{label}] = '{t}' выбрано (частичное)")
             await asyncio.sleep(0.5)
             return True
 
-        logger.error(f"WW: значение '{value}' не найдено в '{label_text}'")
+        logger.error(f"WW: значение '{value}' не найдено в [{label}]")
         return False
 
     except Exception as e:
-        logger.error(f"WW _pick_dropdown '{label_text}': {e}")
+        logger.error(f"WW _pick_by_index [{label}] index={btn_index}: {e}")
         return False
 
 
 async def fill_form(page, bot, game_cfg: dict, ww_params: dict) -> bool:
     """
-    Fills G2G dropdowns for Wuthering Waves in order:
-      1. Platform  → PC
-      2. Server    → EU
-      3. Union Level (dynamic)
+    Fills G2G dropdowns for Wuthering Waves by button index:
+      0 → Platform  = PC
+      1 → Server    = EU
+      2 → Union Level (dynamic)
     """
     union_level = ww_params.get("union_level", "")
 
-    ok = await _pick_dropdown(page, "platform", "PC")
-    if not ok:
-        logger.warning("WW: Platform 'PC' не выбран — продолжаем")
-
-    ok = await _pick_dropdown(page, "server", "EU")
-    if not ok:
-        logger.warning("WW: Server 'EU' не выбран — продолжаем")
-
+    await _pick_by_index(page, 0, "PC",  "Platform")
+    await _pick_by_index(page, 1, "EU",  "Server")
     if union_level:
-        ok = await _pick_dropdown(page, "union level", union_level)
-        if not ok:
-            logger.warning(f"WW: Union Level '{union_level}' не выбран — продолжаем")
+        await _pick_by_index(page, 2, union_level, "Union Level")
 
     return True

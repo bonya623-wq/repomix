@@ -1603,18 +1603,16 @@ class G2GBot:
         # ── МЕТОД 1 пропущен — сразу метод 2 ────────────────────────────────────
 
         # ── МЕТОД 2: поиск по title в Manage — повторяем до победного ────────
-        max_attempts = 12  # ~2 минуты максимум
-        for attempt in range(1, max_attempts + 1):
-            logger.info(f"G2G: [метод 2] поиск по title в Manage (попытка {attempt}/{max_attempts})...")
+        attempt = 0
+        while True:
+            attempt += 1
+            logger.info(f"G2G: [метод 2] поиск по title в Manage (попытка {attempt})...")
             lot_id = await self._find_lot_by_title_in_manage(page, title, known_ids, wait_seconds=30)
             if lot_id:
                 logger.info(f"G2G: ✅ [метод 2] ID найден по title → {lot_id}")
                 return lot_id
-            if attempt < max_attempts:
-                logger.warning(f"G2G: [метод 2] ID не найден — повтор через 10 сек (попытка {attempt})...")
-                await asyncio.sleep(10)
-        logger.error(f"G2G: [метод 2] ID так и не найден после {max_attempts} попыток")
-        return None
+            logger.warning(f"G2G: [метод 2] ID не найден — повтор через 10 сек (попытка {attempt})...")
+            await asyncio.sleep(10)
 
 
     # -----------------------------------------------------------------------

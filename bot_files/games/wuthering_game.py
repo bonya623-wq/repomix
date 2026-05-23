@@ -57,14 +57,9 @@ async def _pick_dropdown(page, label_text: str, value: str, timeout: int = 8000)
             )
         except Exception:
             pass
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(0.5)
 
-        filt = await page.query_selector("input[placeholder='Type to filter']")
-        if filt:
-            await filt.click()
-            await filt.fill(value)
-            await asyncio.sleep(0.8)
-
+        # No filter input — directly pick from visible items
         items = await page.query_selector_all(
             ".q-virtual-scroll__content .q-item, .q-item--dense"
         )

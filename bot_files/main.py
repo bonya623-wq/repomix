@@ -25,6 +25,8 @@ import games.drakensang_game as dso_game
 import drakensang_slots
 import games.diablo_game as di_game
 import diablo_slots
+import games.wuthering_game as ww_game
+import wuthering_slots
 from ai_brief import generate_brief_ai
 import storage
 
@@ -344,6 +346,18 @@ async def run_pass(funpay: FunPayScraper, g2g: G2GBot, game_cfg: dict, is_first_
                 continue
             logger.info(f"DI: server={di_server_g2g!r} class={di_class_g2g!r} level={di_level}")
 
+        elif "wuthering" in game_cfg["name"].lower():
+            # Wuthering Waves — EU only (like ZZZ checks lot.region)
+            lot_region = lot.region
+            if lot_region and lot_region.lower() != "europe":
+                logger.warning(f"WW: регион '{lot_region}' ≠ Europe — пропускаем лот")
+                storage.save_used_lot(lot.lot_id, game_name)
+                used_lots.add(lot.lot_id)
+                continue
+            ww_level_raw  = lot.level or 0
+            ww_union_lvl  = wuthering_slots.ww_union_level(ww_level_raw)
+            logger.info(f"WW: union_level={ww_union_lvl!r} level_raw={ww_level_raw} region={lot_region or 'не указан→EU'}")
+
         # Generate unique title — shuffle segments of lot.title (same as Raid)
         _orig_title = (lot.title or "").strip()
         _description = (lot.detailed_description or lot.description or "").strip()
@@ -438,6 +452,8 @@ async def run_pass(funpay: FunPayScraper, g2g: G2GBot, game_cfg: dict, is_first_
             _ai_extra = f"Level: {lot.level or 0}, Class: {dso_class_g2g}, Server: {dso_server_g2g}"
         elif "diablo" in game_cfg["name"].lower():
             _ai_extra = f"Level: {di_level}, Class: {di_class_g2g}, Server: {di_server_g2g}"
+        elif "wuthering" in game_cfg["name"].lower():
+            _ai_extra = f"Union Level: {ww_union_lvl}, Server: EU"
         elif "black desert" in game_cfg["name"].lower():
             _ai_extra = f"Level: {lot.level or 0}, Class: {bdo_class_g2g}, Server: {server_g2g}"
         elif "eve" in game_cfg["name"].lower():
@@ -553,12 +569,16 @@ async def run_pass(funpay: FunPayScraper, g2g: G2GBot, game_cfg: dict, is_first_
                     except Exception:
                         brief_description = (lot.description or "")[:200]
                 elif "diablo" in game_cfg["name"].lower():
-                    # Fallback: class + level + server
                     _di_parts = []
                     if di_class_g2g:  _di_parts.append(di_class_g2g)
                     if di_level:      _di_parts.append(f"Lv{di_level}")
                     if di_server_g2g: _di_parts.append(di_server_g2g)
                     brief_description = " | ".join(_di_parts)
+                elif "wuthering" in game_cfg["name"].lower():
+                    brief_description = wuthering_slots.generate_ww_brief(
+                        union_level=ww_union_lvl,
+                        original_brief=lot.description or "",
+                    )
                 else:
                     # Raid
                     from description_generator import generate_brief_description_raid
@@ -648,6 +668,10 @@ async def run_pass(funpay: FunPayScraper, g2g: G2GBot, game_cfg: dict, is_first_
             }
             async def game_handler(page, bot, _cfg=game_cfg, _dip=_di_params):
                 return await di_game.fill_form(page, bot, _cfg, _dip)
+        elif "wuthering" in game_cfg["name"].lower():
+            _ww_params = {"union_level": ww_union_lvl}
+            async def game_handler(page, bot, _cfg=game_cfg, _wp=_ww_params):
+                return await ww_game.fill_form(page, bot, _cfg, _wp)
         elif game_cfg.get("is_roblox"):
             _rbl_params = {"g2g_game_name": game_cfg.get("g2g_game_name", "")}
             async def game_handler(page, bot, _cfg=game_cfg, _rp=_rbl_params):
@@ -678,7 +702,7 @@ async def run_pass(funpay: FunPayScraper, g2g: G2GBot, game_cfg: dict, is_first_
                 funpay_url=lot_url,
                 game=game_cfg.get("g2g_brand", game_cfg["name"]),
                 region=(
-                    "EU" if ("throne" in game_cfg["name"].lower() or "liberty" in game_cfg["name"].lower() or "diablo" in game_cfg["name"].lower())
+                    "EU" if any(k in game_cfg["name"].lower() for k in ("throne", "liberty", "diablo", "wuthering"))
                     else game_cfg.get("region", "")
                 ),
                 server_g2g=server_g2g,

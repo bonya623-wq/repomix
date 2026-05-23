@@ -67,6 +67,16 @@ _GAME_HINTS = {
     ),
     "warframe":    "Focus on: Mastery Rank (MR), platinum, Prime Vault, key mods",
     "drakensang":  "Focus on: named sets (Dragan/BGH/Winter/Guardian etc.), Knowledge points, level, class",
+    "wuthering":   (
+        "Strict priority order for Wuthering Waves account listings:\n"
+        "1. 5★ Resonators — list S-rank characters by name (Jinhsi, Camellya, Carlotta, Rover, Jiyan, etc.) — FIRST\n"
+        "2. 5★ Weapons — S-rank weapons by name if mentioned\n"
+        "3. Astrite — gacha currency amount (e.g. '12000 Astrite', '80 pulls')\n"
+        "4. Echo/Sets — echo builds, set names (e.g. 'Sierra Gale set', '5pc Moonlit')\n"
+        "5. Union Level — e.g. 'UL80', 'UL70'\n"
+        "6. Server — EU — LAST\n"
+        "Skip: account security, delivery info, payment methods."
+    ),
     "diablo":      (
         "Strict priority order for Diablo Immortal account listings:\n"
         "1. Combat Rating (CR) — e.g. 'CR 5500', 'CR 4800' — FIRST, most important\n"

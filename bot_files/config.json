@@ -952,6 +952,47 @@
       "g2g_dropdowns": []
     },
     {
+      "name": "Wuthering Waves",
+      "enabled": true,
+      "funpay_url": "https://funpay.com/en/lots/2390/",
+      "funpay_region_filter": "Europe",
+      "price_multiplier": 1.6,
+      "min_funpay_price_usd": 10,
+      "max_funpay_price_usd": 1500,
+      "min_seller_reviews": 0,
+      "require_auto_delivery": false,
+      "lots_per_pass": 10,
+      "loop_interval_seconds": 60,
+      "title_blacklist": [],
+      "blacklist_whitelist": [],
+      "seller_blacklist": [],
+      "builtin_blacklist": [
+        "asia server",
+        "na server",
+        "north america",
+        "america server",
+        "global server",
+        "sea server",
+        "china server"
+      ],
+      "price_tiers": [
+        { "min": 0,    "max": 100,   "multiplier": 1.8  },
+        { "min": 100,  "max": 200,   "multiplier": 1.49 },
+        { "min": 200,  "max": 300,   "multiplier": 1.53 },
+        { "min": 300,  "max": 400,   "multiplier": 1.5  },
+        { "min": 400,  "max": 500,   "multiplier": 1.43 },
+        { "min": 500,  "max": 600,   "multiplier": 1.42 },
+        { "min": 600,  "max": 700,   "multiplier": 1.43 },
+        { "min": 700,  "max": 1000,  "multiplier": 1.39 },
+        { "min": 1000, "max": 1500,  "multiplier": 1.35 },
+        { "min": 1500, "max": 99999, "multiplier": 1.33 }
+      ],
+      "g2g_dropdowns": [
+        { "index": 0, "value": "PC" },
+        { "index": 1, "value": "EU" }
+      ]
+    },
+    {
       "name": "Roblox",
       "enabled": true,
       "g2g_brand": "RBL",

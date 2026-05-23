@@ -84,6 +84,7 @@ POSTIMAGES_GALLERY_HEX = {
     "warframe":   "mbMXTds",
     "drakensang": "GvdF4Jm",
     "diablo":     "9mMTnHy",
+    "wuthering":  "3GW4pyw",
 }
 
 

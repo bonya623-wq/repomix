@@ -702,7 +702,7 @@ async def run_pass(funpay: FunPayScraper, g2g: G2GBot, game_cfg: dict, is_first_
                 funpay_url=lot_url,
                 game=game_cfg.get("g2g_brand", game_cfg["name"]),
                 region=(
-                    "EU" if any(k in game_cfg["name"].lower() for k in ("throne", "liberty", "diablo", "wuthering"))
+                    "EU" if any(k in game_cfg["name"].lower() for k in ("throne", "liberty", "diablo"))
                     else game_cfg.get("region", "")
                 ),
                 server_g2g=server_g2g,

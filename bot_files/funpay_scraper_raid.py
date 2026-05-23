@@ -501,12 +501,15 @@ class FunPayScraper:
 
         except Exception as e:
             logger.warning(f"FunPay: ошибка деталей лота: {e}")
-            return "", "", [], ""
+            return "", "", [], "", 0, "", ""
         finally:
             await page.close()
 
     async def _download_photos(self, photo_urls: list, lot_id: str) -> list:
         import shutil
+        if not lot_id:
+            logger.warning("FunPay: _download_photos вызван с пустым lot_id, пропуск")
+            return []
         tmp_dir = Path(f"images/tmp/{lot_id}")
         if tmp_dir.exists():
             shutil.rmtree(tmp_dir)

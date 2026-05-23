@@ -76,9 +76,12 @@ async def fill_form(page, bot, game_cfg: dict, ww_params: dict) -> bool:
     """
     union_level = ww_params.get("union_level", "")
 
-    await _pick_by_index(page, 0, "PC",  "Platform")
-    await _pick_by_index(page, 1, "EU",  "Server")
+    if not await _pick_by_index(page, 0, "PC",  "Platform"):
+        return False
+    if not await _pick_by_index(page, 1, "EU",  "Server"):
+        return False
     if union_level:
-        await _pick_by_index(page, 2, union_level, "Union Level")
+        if not await _pick_by_index(page, 2, union_level, "Union Level"):
+            return False
 
     return True

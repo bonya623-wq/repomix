@@ -6,7 +6,7 @@ FUNPAY_TO_G2G_SERVER = {
     "(eu) heredur": "[EU] Heredur",
     "(eu) werian":  "[EU] Werian",
     "(us) agathon": "[US] Agathon",
-    "(us) tegan":   "[US]Tegan",
+    "(us) tegan":   "[US] Tegan",
 }
 
 FUNPAY_TO_G2G_CLASS = {

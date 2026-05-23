@@ -423,6 +423,42 @@ class FunPayScraper:
             logger.warning(f"Postimages aiohttp: ошибка ({e})")
             return None
 
+    async def _upload_to_imgur_reuse_context(self, image_path: str) -> Optional[str]:
+        """Imgur через уже открытый браузер — без запуска нового."""
+        page = await self.context.new_page()
+        try:
+            await page.goto("https://imgur.com/upload", wait_until="domcontentloaded", timeout=40000)
+            await asyncio.sleep(2)
+            file_input = await page.query_selector("input[type='file']")
+            if not file_input:
+                logger.warning("Imgur: file input не найден")
+                return None
+            await file_input.set_input_files(image_path)
+            try:
+                await page.wait_for_selector('img[src*="i.imgur.com"]', timeout=30000)
+            except Exception:
+                pass
+            url = await page.evaluate("""
+                () => {
+                    const imgs = document.querySelectorAll('img[src*="i.imgur.com"]')
+                    for (const img of imgs) {
+                        if (img.src && img.src.includes('i.imgur.com') && !img.src.includes('favicon'))
+                            return img.src
+                    }
+                    return null
+                }
+            """)
+            if url:
+                logger.info(f"Imgur: Direct link -> {url}")
+                return url
+            logger.warning("Imgur: ссылка не получена")
+            return None
+        except Exception as e:
+            logger.warning(f"Imgur: ошибка: {e}")
+            return None
+        finally:
+            await page.close()
+
     async def _upload_photo(self, image_path: str, game: str = "") -> Optional[str]:
         """Браузер (Postimages) → aiohttp (Postimages) → Imgur."""
         url = await upload_to_postimages(image_path, self.context, game=game)
@@ -434,8 +470,8 @@ class FunPayScraper:
         if url:
             return url
 
-        logger.info("Postimages не сработал — пробуем Imgur...")
-        url = await upload_to_imgur(image_path, self.imgur_proxy)
+        logger.info("Postimages не сработал — пробуем Imgur (переиспользуем браузер)...")
+        url = await self._upload_to_imgur_reuse_context(image_path)
         if url:
             logger.info(f"Imgur: загружено -> {url}")
             return url
@@ -515,11 +551,11 @@ class FunPayScraper:
             shutil.rmtree(tmp_dir)
         tmp_dir.mkdir(parents=True, exist_ok=True)
 
-        paths = []
         headers = {"User-Agent": "Mozilla/5.0"}
-        async with aiohttp.ClientSession() as session:
-            for i, url in enumerate(photo_urls):
-                try:
+
+        async def _download_one(i: int, url: str) -> Optional[str]:
+            try:
+                async with aiohttp.ClientSession() as session:
                     async with session.get(
                         url,
                         headers=headers,
@@ -530,12 +566,14 @@ class FunPayScraper:
                             path = tmp_dir / f"photo_{i}.{ext}"
                             with open(path, "wb") as f:
                                 f.write(await resp.read())
-                            paths.append(str(path))
                             logger.info(f"FunPay: скачано фото {i+1} -> {path}")
-                except Exception as e:
-                    logger.debug(f"Ошибка скачивания фото: {e}")
+                            return str(path)
+            except Exception as e:
+                logger.debug(f"Ошибка скачивания фото {i+1}: {e}")
+            return None
 
-        return paths
+        results = await asyncio.gather(*[_download_one(i, url) for i, url in enumerate(photo_urls)])
+        return [r for r in results if r]
 
     async def get_best_lot(
         self,
@@ -772,10 +810,10 @@ class FunPayScraper:
                         photo_urls = photo_urls[:2]
                         logger.info(f"FunPay: найдено фото, берём {len(photo_urls)} - загружаем...")
                         local_photos = await self._download_photos(photo_urls, lot_id)
-                        for path in local_photos:
-                            url = await self._upload_photo(path, game=game)
-                            if url:
-                                photo_links.append(url)
+                        upload_results = await asyncio.gather(
+                            *[self._upload_photo(p, game=game) for p in local_photos]
+                        )
+                        photo_links = [u for u in upload_results if u]
                         logger.info(f"Фото загружено: {len(photo_links)}")
                     else:
                         logger.info("FunPay: фото не найдены - пропускаем Media")

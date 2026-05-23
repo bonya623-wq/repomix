@@ -32,7 +32,6 @@ async def _pick_dropdown(page, label_text: str, value: str, timeout: int = 8000)
                 btn = await group.query_selector("button.g-btn-select, button[class*='select']")
                 if btn:
                     await btn.click()
-                    await asyncio.sleep(1.2)
                     opened = True
                     break
 
@@ -43,7 +42,6 @@ async def _pick_dropdown(page, label_text: str, value: str, timeout: int = 8000)
                 txt = (await btn.inner_text()).strip().lower()
                 if "please select" in txt:
                     await btn.click()
-                    await asyncio.sleep(1.2)
                     opened = True
                     break
 

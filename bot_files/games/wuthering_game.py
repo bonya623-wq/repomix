@@ -35,16 +35,17 @@ async def _pick_dropdown(page, label_text: str, value: str, timeout: int = 8000)
                     opened = True
                     break
 
-        # Method 2: fallback — first unfilled "Please select"
+        # Method 2: fallback — Union Level is LAST "Please select"
+        # Order: Platform(0) → Server(1) → Union Level(2)
         if not opened:
             btns = await page.query_selector_all("button.g-btn-select")
-            for btn in btns:
-                txt = (await btn.inner_text()).strip().lower()
-                if "please select" in txt:
-                    await btn.click()
-                    await asyncio.sleep(1.2)
-                    opened = True
-                    break
+            please = [btn for btn in btns
+                      if "please select" in (await btn.inner_text()).strip().lower()]
+            if please:
+                # Always click the LAST remaining "Please select" = Union Level
+                await please[-1].click()
+                await asyncio.sleep(1.2)
+                opened = True
 
         if not opened:
             logger.warning(f"WW: дропдаун '{label_text}' не найден")

@@ -26,6 +26,7 @@ import logging
 import re
 import os
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -203,6 +204,7 @@ def save_lot_pair(
         "funpay_url":   funpay_url,
         "funpay_price": round(funpay_price, 2),
         "g2g_price":    round(g2g_price, 2),
+        "published_at": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
     })
     data[game_name] = pairs
     _save_atomic(LOT_PAIRS_FILE, data)

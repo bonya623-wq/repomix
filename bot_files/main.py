@@ -1116,13 +1116,27 @@ async def run_cleanup(g2g: G2GBot, funpay: FunPayScraper, context=None,
     # ── Раскладываем по корзинам ───────────────────────────────────────────
     to_delete_sold:    list[tuple[str, dict]] = []
     to_delete_offline: list[tuple[str, dict]] = []
+    to_delete_old:     list[tuple[str, dict]] = []
     to_keep:           list[tuple[str, dict]] = []
 
+    today = datetime.now().date()
     for game_name, pair, sold, hours in results_raw:
         title = pair.get("title", "")[:50]
+        # Проверяем возраст лота
+        published_str = pair.get("published_at", "")
+        lot_age_days = 0
+        if published_str:
+            try:
+                lot_age_days = (today - datetime.strptime(published_str, "%Y-%m-%d").date()).days
+            except Exception:
+                pass
+
         if sold:
             logger.info(f"  ❌ ПРОДАН          | {title}")
             to_delete_sold.append((game_name, pair))
+        elif lot_age_days >= 30:
+            logger.info(f"  ❌ СТАРЫЙ {lot_age_days} дн.   | {title}")
+            to_delete_old.append((game_name, pair))
         elif hours != -1.0 and hours >= offline_hours_threshold:
             label = f"{hours/24:.0f} дн." if hours >= 48 else f"{hours:.0f}ч"
             logger.info(f"  ❌ ОФЛАЙН {label:>6}  | {title}")
@@ -1131,9 +1145,10 @@ async def run_cleanup(g2g: G2GBot, funpay: FunPayScraper, context=None,
             to_keep.append((game_name, pair))
 
     print(" " * 80)
-    to_delete_all = to_delete_sold + to_delete_offline
+    to_delete_all = to_delete_sold + to_delete_old + to_delete_offline
     logger.info(f"{'='*50}")
     logger.info(f"Проверено: {total} | Продано: {len(to_delete_sold)} | "
+                f"Старше 30 дн.: {len(to_delete_old)} | "
                 f"Оффлайн 4+ дн.: {len(to_delete_offline)} | Активных: {len(to_keep)}")
     logger.info(f"{'='*50}")
 
@@ -1145,17 +1160,23 @@ async def run_cleanup(g2g: G2GBot, funpay: FunPayScraper, context=None,
     logger.info(f"Удаляем {len(to_delete_all)} лотов с G2G...")
     successfully_deleted: set = set()
     offline_g2g_ids = {p["g2g_id"] for _, p in to_delete_offline}
+    old_g2g_ids     = {p["g2g_id"] for _, p in to_delete_old}
 
     for idx, (game_name, pair) in enumerate(to_delete_all, 1):
         g2g_id    = pair["g2g_id"]
         funpay_id = pair["funpay_id"]
-        reason    = "оффлайн 4+ дн." if g2g_id in offline_g2g_ids else "продан"
+        if g2g_id in old_g2g_ids:
+            reason = f"старше 30 дн. (с {pair.get('published_at', '?')})"
+        elif g2g_id in offline_g2g_ids:
+            reason = "оффлайн 4+ дн."
+        else:
+            reason = "продан"
         logger.info(f"  [{idx}/{len(to_delete_all)}] Удаляем G2G={g2g_id} ({reason}) FP={funpay_id}")
         deleted = await g2g.delete_lot(g2g_id)
         if deleted:
             successfully_deleted.add(g2g_id)
             logger.info(f"  G2G={g2g_id} удалён OK")
-            if g2g_id in offline_g2g_ids and funpay_id:
+            if (g2g_id in offline_g2g_ids or g2g_id in old_g2g_ids) and funpay_id:
                 storage.remove_used_lot(funpay_id, game_name)
                 logger.info(f"  FP={funpay_id} снят с used_lots → бот выложит снова")
         else:

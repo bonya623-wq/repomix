@@ -1,0 +1,1095 @@
+{
+  "headless": false,
+  "loop_interval_seconds": 60,
+  "bot_proxy": "",
+  "imgur_proxy": " ",
+  "games": [
+    {
+      "name": "Raid: Shadow Legends",
+      "enabled": true,
+      "funpay_url": "https://funpay.com/en/lots/566/",
+      "price_multiplier": 1.6,
+      "min_funpay_price_usd": 50,
+      "max_funpay_price_usd": 500,
+      "min_seller_reviews": 0,
+      "require_auto_delivery": false,
+      "lots_per_pass": 10,
+      "loop_interval_seconds": 60,
+      "title_blacklist": [
+        "start",
+        "starter"
+      ],
+      "blacklist_whitelist": [
+        "half start",
+        "halfstart",
+        "half-start",
+        "полустарт",
+        "полу старт"
+      ],
+      "seller_blacklist": [
+        "Eternallos",
+        "UxxU",
+        "Ghoul666SSSrank",
+        "perch1337",
+        "ThomasFighter",
+        "kussunchik",
+        "Metrochop002026",
+        "Xoror",
+        "FateShop",
+        "Nanastia",
+        "ashleywilliams",
+        "Training1988",
+        "pklieulinh",
+        "Nioa",
+        "withoutmewithout",
+        "Besherr",
+        "NicoleDeals",
+        "Stasyan4ik2811",
+        "v3x",
+        "AmadeiPWNZ",
+        "FunnyBoty",
+        "DiaZi",
+        "junxu",
+        "Lon1iz",
+        "SPl4V",
+        "CelticInvasion",
+        "Truen213",
+        "NovaPrimee",
+        "Kitiara",
+        "DurmanPlay",
+        "LonaShop",
+        "VanWilder",
+        "reaxee",
+        "LanaLins",
+        "KittyAnna",
+        "qeze",
+        "Milostev",
+        "Yakarl",
+        "Rachman",
+        "EvillTraDer",
+        "MLKSHOP",
+        "Silifid",
+        "Milfa2026",
+        "Lansik",
+        "crum61kg",
+        "odner1",
+        "ukolw",
+        "SendrouShop",
+        "BatrakSpb",
+        "PyckuZ",
+        "Dhoine312",
+        "tarkovbuyer13",
+        "WaveAccountsLB",
+        "dkhanzo",
+        "Contixxx",
+        "DRaGNeeL4ik",
+        "Nigyrpas",
+        "N1mB00",
+        "HavaL",
+        "Holiday0987",
+        "THEDEADSHOT",
+        "BlazeRoy",
+        "Chalco",
+        "KingGrowl",
+        "ArcTap",
+        "mrbull001",
+        "Cherryy030",
+        "NishaShop",
+        "GemShop",
+        "nishanow",
+        "Mirage",
+        "Kotkot",
+        "sdzafeqa",
+        "isak2025",
+        "CDMgames",
+        "Pokemonnyx",
+        "Damag77",
+        "Purple404",
+        "eGOR6543IGRA",
+        "asd5592",
+        "N3l3X",
+        "Vampire6666",
+        "Annitop",
+        "ToroStore",
+        "DonEro",
+        "mdeens",
+        "ZiR",
+        "XXALHIMCH",
+        "Leha123",
+        "nIKOoffFFFFFFFFFF",
+        "Gnoomes",
+        "TopLootShop",
+        "GilgameshShumer",
+        "zhuraa",
+        "Honkai2025",
+        "aokigahara13"
+      ],
+      "builtin_blacklist": [
+        "не сменная",
+        "несменная",
+        "не сменяемая",
+        "не сменка",
+        "без смены",
+        "без замены почты",
+        "почта не меняется",
+        "нет смены",
+        "без смены почты",
+        "не меняется почта",
+        "неизменная почта",
+        "почту не сменить",
+        "фейковая почта",
+        "почта не существует",
+        "no mail change",
+        "mail not changeable",
+        "email not changeable",
+        "not changeable",
+        "No changeable email",
+        "no email change",
+        "no changes",
+        "mail cannot",
+        "email cannot",
+        "mail cannot be changed",
+        "email cannot be changed",
+        "Fake mail",
+        "Mail does not exist",
+        "привязка фб",
+        "привязка facebook",
+        "фб привязан",
+        "facebook привязан",
+        "fb привязан",
+        "привязан фб",
+        "linked fb",
+        "facebook linked",
+        "fb linked",
+        "facebook attached",
+        "ne smennaya",
+        "nesmennaya",
+        "ne smenyaemaya",
+        "ne smenka",
+        "bez smeny",
+        "bez zameny pochty",
+        "pochta ne menyaetsya",
+        "net smeny",
+        "ne menyaetsya pochta",
+        "neizmennaya pochta",
+        "pochtu ne smenit",
+        "fake pochta",
+        "pochta ne sushestvuet",
+        "privyazka fb",
+        "privyazka facebook",
+        "fb privyazan",
+        "facebook privyazan",
+        "privyazan fb",
+        "mail ne menyat",
+        "email ne menyat",
+        "nesmenka",
+        "ne smenaya",
+        "BogOdin",
+        "nIKOoffFFFFFFFFFF",
+        "Not a replaceme",
+        "The email address is not changeable",
+        "No changeable email",
+        "Mail does not change",
+        "not change",
+        "не меняется",
+        "не поменять",
+        "не меняем",
+        "The mail is removable",
+        "mail is remove",
+        "non-replaceable",
+        "non replaceable",
+        "unreplaceable",
+        "not replaceable",
+        "non replace"
+      ],
+      "price_tiers": [
+        {
+          "min": 0,
+          "max": 100,
+          "multiplier": 1.7
+        },
+        {
+          "min": 100,
+          "max": 150,
+          "multiplier": 1.6
+        },
+        {
+          "min": 150,
+          "max": 200,
+          "multiplier": 1.4
+        },
+        {
+          "min": 200,
+          "max": 400,
+          "multiplier": 1.4
+        },
+        {
+          "min": 400,
+          "max": 700,
+          "multiplier": 1.3
+        },
+        {
+          "min": 700,
+          "max": 99999,
+          "multiplier": 1.2
+        }
+      ],
+      "g2g_dropdowns": [
+        {
+          "index": 0,
+          "value": "Android"
+        },
+        {
+          "index": 1,
+          "value": "{hero_level}"
+        },
+        {
+          "index": 2,
+          "value": "{myth_level}"
+        },
+        {
+          "index": 4,
+          "value": "9 hours"
+        }
+      ]
+    },
+    {
+      "name": "WOW Classic Era / Seasonal / TBC Anniversary",
+      "enabled": true,
+      "region": "EU",
+      "funpay_price_factor": 0.86,
+      "funpay_url": "https://funpay.com/en/lots/492/",
+      "price_multiplier": 1.5,
+      "min_funpay_price_usd": 200,
+      "max_funpay_price_usd": 900,
+      "min_seller_reviews": 0,
+      "require_auto_delivery": false,
+      "lots_per_pass": 10,
+      "loop_interval_seconds": 60,
+      "title_blacklist": [],
+      "blacklist_whitelist": [],
+      "seller_blacklist": [
+        "BogOdin",
+        "Vadim223444",
+        "Niffleheim",
+        "GameStops",
+        "DARKS1DEGAME",
+        "GeForceman",
+        "lowseller",
+        "RobinMood",
+        "battlenetick",
+        "Vzmah",
+        "Demss",
+        "KelPlush",
+        "Suzaku",
+        "AntoniONE",
+        "PolaGG",
+        "nelemer",
+        "Incepto",
+        "Valikyl",
+        "KotLeopold54"
+      ],
+      "builtin_blacklist": [],
+      "price_tiers": [
+        {
+          "min": 0,
+          "max": 150,
+          "multiplier": 1.7
+        },
+        {
+          "min": 150,
+          "max": 250,
+          "multiplier": 1.6
+        },
+        {
+          "min": 250,
+          "max": 350,
+          "multiplier": 1.57
+        },
+        {
+          "min": 350,
+          "max": 450,
+          "multiplier": 1.47
+        },
+        {
+          "min": 450,
+          "max": 550,
+          "multiplier": 1.45
+        },
+        {
+          "min": 550,
+          "max": 650,
+          "multiplier": 1.38
+        },
+        {
+          "min": 650,
+          "max": 900,
+          "multiplier": 1.36
+        }
+      ],
+      "g2g_dropdowns": []
+    },
+    {
+      "name": "Zenless Zone Zero",
+      "enabled": true,
+      "funpay_url": "https://funpay.com/en/lots/2408/",
+      "funpay_region_filter": "Europe",
+      "price_multiplier": 1.6,
+      "min_funpay_price_usd": 100,
+      "max_funpay_price_usd": 500,
+      "min_seller_reviews": 0,
+      "require_auto_delivery": false,
+      "lots_per_pass": 10,
+      "loop_interval_seconds": 60,
+      "title_blacklist": [],
+      "blacklist_whitelist": [],
+      "seller_blacklist": [
+        "Ghoul666SSSrank",
+        "WhiteShadowShop",
+        "yourbambi",
+        "LonaShop",
+        "SuunKun",
+        "Asincerity",
+        "WWWorld",
+        "Prarok2",
+        "opachokavo",
+        "RaidenShotgun",
+        "noixezz",
+        "Nanastia",
+        "KaPToFEJlbHoETll0PE",
+        "mrbull001",
+        "NovaPrimee",
+        "Taffer1",
+        "DanseMacabree",
+        "BouForse"
+      ],
+      "builtin_blacklist": [
+        "america server",
+        "american server",
+        "na server",
+        "north america",
+        "america account",
+        "сервер америк",
+        "сервер na",
+        "северная америка",
+        "asia server",
+        "asian server",
+        "asia account",
+        "сервер азия",
+        "азиатский сервер",
+        "tw server",
+        "hmt server",
+        "taiwan server",
+        "hong kong server",
+        "macao server"
+      ],
+      "price_tiers": [
+        {
+          "min": 0,
+          "max": 50,
+          "multiplier": 1.8
+        },
+        {
+          "min": 50,
+          "max": 100,
+          "multiplier": 1.7
+        },
+        {
+          "min": 100,
+          "max": 200,
+          "multiplier": 1.6
+        },
+        {
+          "min": 200,
+          "max": 300,
+          "multiplier": 1.5
+        },
+        {
+          "min": 300,
+          "max": 400,
+          "multiplier": 1.4
+        },
+        {
+          "min": 400,
+          "max": 99999,
+          "multiplier": 1.3
+        }
+      ],
+      "g2g_dropdowns": [
+        {
+          "index": 0,
+          "value": "PC"
+        },
+        {
+          "index": 1,
+          "value": "EU"
+        },
+        {
+          "index": 2,
+          "value": "{zzz_level}"
+        }
+      ]
+    },
+    {
+      "name": "EVE Online",
+      "enabled": true,
+      "funpay_url": "https://funpay.com/en/lots/22/",
+      "funpay_region_filter": "",
+      "price_multiplier": 1.6,
+      "min_funpay_price_usd": 10,
+      "max_funpay_price_usd": 1500,
+      "min_seller_reviews": 0,
+      "require_auto_delivery": false,
+      "lots_per_pass": 10,
+      "loop_interval_seconds": 60,
+      "title_blacklist": [],
+      "blacklist_whitelist": [],
+      "seller_blacklist": [],
+      "builtin_blacklist": [
+        "serenity",
+        "china server",
+        "chinese server"
+      ],
+      "price_tiers": [
+        {
+          "min": 0,
+          "max": 100,
+          "multiplier": 1.8
+        },
+        {
+          "min": 100,
+          "max": 200,
+          "multiplier": 1.49
+        },
+        {
+          "min": 200,
+          "max": 300,
+          "multiplier": 1.53
+        },
+        {
+          "min": 300,
+          "max": 400,
+          "multiplier": 1.5
+        },
+        {
+          "min": 400,
+          "max": 500,
+          "multiplier": 1.43
+        },
+        {
+          "min": 500,
+          "max": 600,
+          "multiplier": 1.42
+        },
+        {
+          "min": 600,
+          "max": 700,
+          "multiplier": 1.43
+        },
+        {
+          "min": 700,
+          "max": 1000,
+          "multiplier": 1.39
+        },
+        {
+          "min": 1000,
+          "max": 1500,
+          "multiplier": 1.35
+        },
+        {
+          "min": 1500,
+          "max": 99999,
+          "multiplier": 1.33
+        }
+      ],
+      "g2g_dropdowns": [
+        {
+          "index": 0,
+          "value": "Tranquility"
+        }
+      ]
+    },
+    {
+      "name": "Warframe",
+      "enabled": true,
+      "funpay_url": "https://funpay.com/en/lots/65/",
+      "funpay_region_filter": "",
+      "price_multiplier": 1.6,
+      "min_funpay_price_usd": 10,
+      "max_funpay_price_usd": 1500,
+      "min_seller_reviews": 0,
+      "require_auto_delivery": false,
+      "lots_per_pass": 10,
+      "loop_interval_seconds": 60,
+      "title_blacklist": [],
+      "blacklist_whitelist": [],
+      "seller_blacklist": [],
+      "builtin_blacklist": [
+        "ps4",
+        "xbox",
+        "playstation"
+      ],
+      "price_tiers": [
+        {
+          "min": 0,
+          "max": 100,
+          "multiplier": 1.8
+        },
+        {
+          "min": 100,
+          "max": 200,
+          "multiplier": 1.49
+        },
+        {
+          "min": 200,
+          "max": 300,
+          "multiplier": 1.53
+        },
+        {
+          "min": 300,
+          "max": 400,
+          "multiplier": 1.5
+        },
+        {
+          "min": 400,
+          "max": 500,
+          "multiplier": 1.43
+        },
+        {
+          "min": 500,
+          "max": 600,
+          "multiplier": 1.42
+        },
+        {
+          "min": 600,
+          "max": 700,
+          "multiplier": 1.43
+        },
+        {
+          "min": 700,
+          "max": 1000,
+          "multiplier": 1.39
+        },
+        {
+          "min": 1000,
+          "max": 1500,
+          "multiplier": 1.35
+        },
+        {
+          "min": 1500,
+          "max": 99999,
+          "multiplier": 1.33
+        }
+      ],
+      "g2g_dropdowns": []
+    },
+    {
+      "name": "Throne and Liberty",
+      "enabled": true,
+      "funpay_url": "https://funpay.com/en/lots/1430/",
+      "price_multiplier": 1.6,
+      "min_funpay_price_usd": 100,
+      "max_funpay_price_usd": 2500,
+      "min_seller_reviews": 0,
+      "require_auto_delivery": false,
+      "lots_per_pass": 10,
+      "loop_interval_seconds": 60,
+      "title_blacklist": [],
+      "blacklist_whitelist": [],
+      "seller_blacklist": [
+        "Besherr",
+        "PushokStore",
+        "Sentemon"
+      ],
+      "builtin_blacklist": [],
+      "price_tiers": [
+        {
+          "min": 0,
+          "max": 50,
+          "multiplier": 1.8
+        },
+        {
+          "min": 50,
+          "max": 100,
+          "multiplier": 1.75
+        },
+        {
+          "min": 100,
+          "max": 200,
+          "multiplier": 1.6
+        },
+        {
+          "min": 200,
+          "max": 300,
+          "multiplier": 1.55
+        },
+        {
+          "min": 300,
+          "max": 400,
+          "multiplier": 1.55
+        }
+      ],
+      "g2g_dropdowns": [],
+      "server_whitelist": [
+        "fearless",
+        "indomitable",
+        "sacred",
+        "sophia",
+        "usurper"
+      ]
+    },
+    {
+      "name": "Black Desert Online",
+      "enabled": true,
+      "funpay_url": "https://funpay.com/en/lots/33/",
+      "funpay_region_filter": "",
+      "price_multiplier": 1.6,
+      "min_funpay_price_usd": 30,
+      "max_funpay_price_usd": 3500,
+      "min_seller_reviews": 0,
+      "require_auto_delivery": false,
+      "lots_per_pass": 10,
+      "loop_interval_seconds": 60,
+      "title_blacklist": [],
+      "blacklist_whitelist": [],
+      "seller_blacklist": [],
+      "builtin_blacklist": [
+        "na server",
+        "north america",
+        "(na)",
+        "(sa)",
+        "(sea)",
+        "[ps]",
+        "[xbox]",
+        "[other]",
+        "russia server",
+        "taiwan server",
+        "mena server"
+      ],
+      "server_whitelist": [
+        "(EU)"
+      ],
+      "price_tiers": [
+        {
+          "min": 0,
+          "max": 100,
+          "multiplier": 1.8
+        },
+        {
+          "min": 100,
+          "max": 200,
+          "multiplier": 1.49
+        },
+        {
+          "min": 200,
+          "max": 300,
+          "multiplier": 1.53
+        },
+        {
+          "min": 300,
+          "max": 400,
+          "multiplier": 1.5
+        },
+        {
+          "min": 400,
+          "max": 500,
+          "multiplier": 1.43
+        },
+        {
+          "min": 500,
+          "max": 600,
+          "multiplier": 1.42
+        },
+        {
+          "min": 600,
+          "max": 700,
+          "multiplier": 1.43
+        },
+        {
+          "min": 700,
+          "max": 1000,
+          "multiplier": 1.39
+        },
+        {
+          "min": 1000,
+          "max": 1500,
+          "multiplier": 1.35
+        },
+        {
+          "min": 1500,
+          "max": 99999,
+          "multiplier": 1.33
+        }
+      ],
+      "g2g_dropdowns": []
+    },
+    {
+      "name": "Summoners War",
+      "enabled": true,
+      "funpay_url": "https://funpay.com/en/lots/409/",
+      "funpay_region_filter": "",
+      "price_multiplier": 1.6,
+      "min_funpay_price_usd": 100,
+      "max_funpay_price_usd": 200,
+      "min_seller_reviews": 0,
+      "require_auto_delivery": false,
+      "lots_per_pass": 10,
+      "loop_interval_seconds": 60,
+      "title_blacklist": [],
+      "blacklist_whitelist": [],
+      "seller_blacklist": [],
+      "builtin_blacklist": [
+        "asia server",
+        "china server",
+        "global server",
+        "japan server",
+        "korea server",
+        "korean server",
+        "asia account",
+        "global account",
+        "japan account",
+        "korea account"
+      ],
+      "server_whitelist": [
+        "europe",
+        "eu"
+      ],
+      "price_tiers": [
+        {
+          "min": 0,
+          "max": 100,
+          "multiplier": 1.8
+        },
+        {
+          "min": 100,
+          "max": 200,
+          "multiplier": 1.6
+        },
+        {
+          "min": 200,
+          "max": 300,
+          "multiplier": 1.5
+        },
+        {
+          "min": 300,
+          "max": 500,
+          "multiplier": 1.45
+        },
+        {
+          "min": 500,
+          "max": 1000,
+          "multiplier": 1.4
+        },
+        {
+          "min": 1000,
+          "max": 99999,
+          "multiplier": 1.35
+        }
+      ],
+      "g2g_dropdowns": [
+        {
+          "index": 0,
+          "value": "Europe"
+        },
+        {
+          "index": 1,
+          "value": "1"
+        },
+        {
+          "index": 2,
+          "value": "1"
+        }
+      ]
+    },
+    {
+      "name": "Drakensang Online",
+      "enabled": true,
+      "funpay_url": "https://funpay.com/en/lots/466/",
+      "funpay_region_filter": "",
+      "price_multiplier": 1.6,
+      "min_funpay_price_usd": 10,
+      "max_funpay_price_usd": 1500,
+      "min_seller_reviews": 0,
+      "require_auto_delivery": false,
+      "lots_per_pass": 10,
+      "loop_interval_seconds": 60,
+      "title_blacklist": [],
+      "blacklist_whitelist": [],
+      "seller_blacklist": [],
+      "builtin_blacklist": [
+        "agathon",
+        "tegan",
+        "(us)"
+      ],
+      "price_tiers": [
+        {
+          "min": 0,
+          "max": 100,
+          "multiplier": 1.8
+        },
+        {
+          "min": 100,
+          "max": 200,
+          "multiplier": 1.49
+        },
+        {
+          "min": 200,
+          "max": 300,
+          "multiplier": 1.53
+        },
+        {
+          "min": 300,
+          "max": 400,
+          "multiplier": 1.5
+        },
+        {
+          "min": 400,
+          "max": 500,
+          "multiplier": 1.43
+        },
+        {
+          "min": 500,
+          "max": 600,
+          "multiplier": 1.42
+        },
+        {
+          "min": 600,
+          "max": 700,
+          "multiplier": 1.43
+        },
+        {
+          "min": 700,
+          "max": 1000,
+          "multiplier": 1.39
+        },
+        {
+          "min": 1000,
+          "max": 1500,
+          "multiplier": 1.35
+        },
+        {
+          "min": 1500,
+          "max": 99999,
+          "multiplier": 1.33
+        }
+      ],
+      "g2g_dropdowns": []
+    },
+    {
+      "name": "Diablo Immortal",
+      "enabled": true,
+      "funpay_url": "https://funpay.com/en/lots/1010/",
+      "funpay_region_filter": "",
+      "price_multiplier": 1.6,
+      "min_funpay_price_usd": 10,
+      "max_funpay_price_usd": 1500,
+      "min_seller_reviews": 0,
+      "require_auto_delivery": false,
+      "lots_per_pass": 10,
+      "loop_interval_seconds": 60,
+      "title_blacklist": [],
+      "blacklist_whitelist": [],
+      "seller_blacklist": [],
+      "builtin_blacklist": [
+        "(na)",
+        "(sa)",
+        "(sea)",
+        "(east asia)",
+        "(oceania)"
+      ],
+      "price_tiers": [
+        {
+          "min": 0,
+          "max": 100,
+          "multiplier": 1.8
+        },
+        {
+          "min": 100,
+          "max": 200,
+          "multiplier": 1.49
+        },
+        {
+          "min": 200,
+          "max": 300,
+          "multiplier": 1.53
+        },
+        {
+          "min": 300,
+          "max": 400,
+          "multiplier": 1.5
+        },
+        {
+          "min": 400,
+          "max": 500,
+          "multiplier": 1.43
+        },
+        {
+          "min": 500,
+          "max": 600,
+          "multiplier": 1.42
+        },
+        {
+          "min": 600,
+          "max": 700,
+          "multiplier": 1.43
+        },
+        {
+          "min": 700,
+          "max": 1000,
+          "multiplier": 1.39
+        },
+        {
+          "min": 1000,
+          "max": 1500,
+          "multiplier": 1.35
+        },
+        {
+          "min": 1500,
+          "max": 99999,
+          "multiplier": 1.33
+        }
+      ],
+      "g2g_dropdowns": []
+    },
+    {
+      "name": "Wuthering Waves",
+      "enabled": true,
+      "funpay_url": "https://funpay.com/en/lots/2390/",
+      "funpay_region_filter": "",
+      "price_multiplier": 1.6,
+      "min_funpay_price_usd": 10,
+      "max_funpay_price_usd": 1500,
+      "min_seller_reviews": 0,
+      "require_auto_delivery": false,
+      "lots_per_pass": 10,
+      "loop_interval_seconds": 60,
+      "title_blacklist": [],
+      "blacklist_whitelist": [],
+      "seller_blacklist": [],
+      "builtin_blacklist": [
+        "asia server",
+        "na server",
+        "north america",
+        "america server",
+        "global server",
+        "sea server",
+        "china server"
+      ],
+      "price_tiers": [
+        { "min": 0,    "max": 100,   "multiplier": 1.8  },
+        { "min": 100,  "max": 200,   "multiplier": 1.49 },
+        { "min": 200,  "max": 300,   "multiplier": 1.53 },
+        { "min": 300,  "max": 400,   "multiplier": 1.5  },
+        { "min": 400,  "max": 500,   "multiplier": 1.43 },
+        { "min": 500,  "max": 600,   "multiplier": 1.42 },
+        { "min": 600,  "max": 700,   "multiplier": 1.43 },
+        { "min": 700,  "max": 1000,  "multiplier": 1.39 },
+        { "min": 1000, "max": 1500,  "multiplier": 1.35 },
+        { "min": 1500, "max": 99999, "multiplier": 1.33 }
+      ],
+      "g2g_dropdowns": []
+    },
+    {
+      "name": "Roblox",
+      "enabled": true,
+      "g2g_brand": "RBL",
+      "workers": 2,
+      "funpay_tab": "Accounts",
+      "require_auto_delivery": true,
+      "price_multiplier": 1.85,
+      "min_funpay_price_usd": 5,
+      "max_funpay_price_usd": 20,
+      "min_seller_reviews": 50,
+      "lots_per_pass": 5,
+      "loop_interval_seconds": 60,
+      "title_blacklist": [],
+      "blacklist_whitelist": [],
+      "seller_blacklist": [],
+      "builtin_blacklist": [],
+      "price_tiers": [],
+      "g2g_dropdowns": [],
+      "roblox_games": [
+        {
+          "funpay_url": "https://funpay.com/en/lots/2635/",
+          "g2g_name": "Bee Swarm Simulator",
+          "enabled": true
+        },
+        {
+          "funpay_url": "https://funpay.com/en/lots/1155/",
+          "g2g_name": "Blox Fruits",
+          "enabled": true
+        },
+        {
+          "funpay_url": "https://funpay.com/en/lots/2644/",
+          "g2g_name": "RIVALS",
+          "enabled": true
+        },
+        {
+          "funpay_url": "https://funpay.com/en/lots/2974/",
+          "g2g_name": "Attack on Titan Revolution",
+          "enabled": true
+        },
+        {
+          "funpay_url": "https://funpay.com/en/lots/3503/",
+          "g2g_name": "Steal a Brainrot",
+          "enabled": true
+        },
+        {
+          "funpay_url": "https://funpay.com/en/lots/3192/",
+          "g2g_name": "VolleyBall Legends",
+          "enabled": true
+        },
+        {
+          "funpay_url": "https://funpay.com/en/lots/3386/",
+          "g2g_name": "Grow a Garden",
+          "enabled": true
+        },
+        {
+          "funpay_url": "https://funpay.com/en/lots/1969/",
+          "g2g_name": "Blade Ball",
+          "enabled": true
+        },
+        {
+          "funpay_url": "https://funpay.com/en/lots/2715/",
+          "g2g_name": "Anime Vanguards",
+          "enabled": true
+        },
+        {
+          "funpay_url": "https://funpay.com/en/lots/3633/",
+          "g2g_name": "99 Nights In The Forest",
+          "enabled": true
+        },
+        {
+          "funpay_url": "https://funpay.com/en/lots/3603/",
+          "g2g_name": "All Star Tower Defence",
+          "enabled": true
+        },
+        {
+          "funpay_url": "https://funpay.com/en/lots/2932/",
+          "g2g_name": "Fisch",
+          "enabled": true
+        },
+        {
+          "funpay_url": "https://funpay.com/en/lots/1154/",
+          "g2g_name": "Jailbreak",
+          "enabled": true
+        },
+        {
+          "funpay_url": "https://funpay.com/en/lots/3047/",
+          "g2g_name": "Jujutsu Infinite",
+          "enabled": true
+        },
+        {
+          "funpay_url": "https://funpay.com/en/lots/925/",
+          "g2g_name": "Murder Mystery 2",
+          "enabled": true
+        },
+        {
+          "funpay_url": "https://funpay.com/en/lots/4164/",
+          "g2g_name": "Sailor Piece",
+          "enabled": true
+        }
+      ]
+    }
+  ]
+}

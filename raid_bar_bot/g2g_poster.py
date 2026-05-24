@@ -1,13 +1,17 @@
 """
 G2G listing automation via Playwright (async).
 
-HOW TO GET G2G COOKIES
------------------------
-1. Open Chrome, log in to g2g.com as your seller account.
-2. Open DevTools → Application → Cookies → https://www.g2g.com
-3. Copy all cookies as a single semicolon-separated string:
-   name1=value1; name2=value2; ...
-4. Paste the string into config.json → "g2g_cookie".
+HOW TO SET UP COOKIES
+---------------------
+Use a browser extension like "Cookie-Editor" or "EditThisCookie":
+  1. Log in to g2g.com as your seller account.
+  2. Export cookies as JSON (Netscape / Playwright format).
+  3. Save the JSON file alongside config.json, e.g. cookies_g2g.json.
+  4. Set in config.json:  "g2g_cookies_file": "cookies_g2g.json"
+
+The JSON format is an array of objects, exactly as exported by most
+cookie-editor extensions:
+  [{"name": "...", "value": "...", "domain": ".g2g.com", ...}, ...]
 
 SELECTOR NOTES
 --------------
@@ -16,8 +20,10 @@ screenshot (saved as g2g_debug_*.png) and update the selectors below.
 """
 
 import asyncio
+import json
 import logging
 import re
+from pathlib import Path
 from typing import Optional
 
 from playwright.async_api import BrowserContext, Page, async_playwright
@@ -64,27 +70,59 @@ class G2GPoster:
     # ------------------------------------------------------------------
 
     async def _load_cookies(self) -> None:
-        raw = self._config.get("g2g_cookie", "").strip()
-        if not raw:
-            raise ValueError("g2g_cookie is empty — set it in config.json")
+        """
+        Load G2G session cookies. Accepts three formats (in priority order):
 
-        cookies = []
-        for chunk in raw.split(";"):
-            chunk = chunk.strip()
-            if "=" not in chunk:
-                continue
-            name, _, value = chunk.partition("=")
-            cookies.append(
-                {
-                    "name": name.strip(),
-                    "value": value.strip(),
-                    "domain": ".g2g.com",
-                    "path": "/",
-                    "sameSite": "Lax",
-                }
+        1. "g2g_cookies_file": "cookies_g2g.json"   ← path to exported JSON
+        2. "g2g_cookie": [{"name":...}, ...]         ← inline JSON array
+        3. "g2g_cookie": "name=val; name2=val2"      ← legacy string
+        """
+        cookies: list[dict] = []
+
+        cookies_file = self._config.get("g2g_cookies_file", "")
+        if cookies_file:
+            p = Path(cookies_file)
+            if not p.exists():
+                raise FileNotFoundError(f"Cookie file not found: {p.resolve()}")
+            with open(p, encoding="utf-8") as f:
+                cookies = json.load(f)
+            logger.info(f"Loaded {len(cookies)} cookies from {p}")
+
+        elif isinstance(self._config.get("g2g_cookie"), list):
+            cookies = self._config["g2g_cookie"]
+            logger.info(f"Loaded {len(cookies)} inline cookies from config")
+
+        elif isinstance(self._config.get("g2g_cookie"), str):
+            raw = self._config["g2g_cookie"].strip()
+            if not raw:
+                raise ValueError(
+                    "No G2G cookies configured. "
+                    "Set 'g2g_cookies_file': 'cookies_g2g.json' in config.json"
+                )
+            for chunk in raw.split(";"):
+                chunk = chunk.strip()
+                if "=" not in chunk:
+                    continue
+                name, _, value = chunk.partition("=")
+                cookies.append(
+                    {"name": name.strip(), "value": value.strip(),
+                     "domain": ".g2g.com", "path": "/", "sameSite": "Lax"}
+                )
+            logger.info(f"Loaded {len(cookies)} cookies from string")
+
+        else:
+            raise ValueError(
+                "No G2G cookies configured. "
+                "Set 'g2g_cookies_file': 'cookies_g2g.json' in config.json"
             )
+
+        # Playwright needs at least path and sameSite
+        for c in cookies:
+            c.setdefault("path", "/")
+            c.setdefault("sameSite", "Lax")
+
         await self._ctx.add_cookies(cookies)
-        logger.info(f"Loaded {len(cookies)} G2G cookies")
+        logger.info(f"G2G session: {len(cookies)} cookies loaded")
 
     async def _is_logged_in(self, page: Page) -> bool:
         return "login" not in page.url and "sign-in" not in page.url

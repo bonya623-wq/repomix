@@ -1,36 +1,37 @@
 """
 Parser for https://raid-cheap.com
 
-Uses the site's own JSON APIs directly — no browser/Playwright needed:
+Uses Playwright to visually click champion cards and Search,
+while intercepting the site's go.php JSON API responses for data.
 
-  GET cat.php?id=51
-    → all RSL champions: [{id, en_name, border_color, role_img}, ...]
+Flow for each mythic champion:
+  1. Click the champion card in .card-list  (li[data-id=ID])
+  2. Click "Search" button
+  3. Site auto-loads all result pages via search_append() AJAX
+  4. We intercept every /go.php response to build the account list
 
-  GET go.php?id[]=CHAMP_ID&game_id=3&page=P&sort=price_asc
-    → paginated accounts: {code:1, data:{totalpage:N, 0:{account,price,role,...}, ...}}
-
-Price field is in CNY.  USD = price × 0.165  (same formula the site uses).
-Champion names are returned in English (en_name) — no translation needed.
-Champion rarity comes from border_color in cat.php data:
-  #FF3300 (red)  → Mythic
-  #FFCC66 (gold) → Legendary
+Champion catalogue loaded via cat.php at the start of each scan.
+Price field in go.php is CNY.  USD = price × 0.165  (site's own rate).
 """
 
 import asyncio
 import logging
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import httpx
+from playwright.async_api import Response
 
 from parser import AccountData
+
+if TYPE_CHECKING:
+    from playwright.async_api import BrowserContext, Page
 
 logger = logging.getLogger(__name__)
 
 BASE_URL    = "https://raid-cheap.com"
-GAME_ID     = "3"          # RSL in go.php
-CATEGORY_ID = "51"         # RSL Champions tab in cat.php
+CATEGORY_ID = "51"          # RSL Champions tab in cat.php
 
-CNY_TO_USD  = 0.165        # conversion rate hard-coded by the site
+CNY_TO_USD  = 0.165
 
 HEADERS = {
     "User-Agent": (
@@ -38,11 +39,8 @@ HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     ),
     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-    "Referer":          BASE_URL + "/",
-    "X-Requested-With": "XMLHttpRequest",
 }
 
-# Module-level cache populated by fetch_listing, consumed by fetch_raidcheap_account
 _ACCOUNT_CACHE: dict[str, AccountData] = {}
 
 
@@ -71,29 +69,36 @@ def _is_gold(hex6: str) -> bool:
 # ---------------------------------------------------------------------------
 
 class RaidCheapScraper:
-    """Fetches account listings via raid-cheap.com JSON APIs."""
+    """
+    Opens a browser tab on raid-cheap.com, clicks mythic champion cards,
+    clicks Search, and captures the go.php JSON responses.
+    """
 
-    def __init__(self) -> None:
-        # en_name.lower() → border_color (populated by _load_champions)
+    def __init__(self, context: "BrowserContext") -> None:
+        self._context = context
         self._color_by_name: dict[str, str] = {}
-        # list of (champion_id, en_name) for mythic champions only
         self._mythic_champs: list[tuple[int, str]] = []
+        self._page: Optional["Page"] = None
 
     async def __aenter__(self) -> "RaidCheapScraper":
+        self._page = await self._context.new_page()
         return self
 
     async def __aexit__(self, *_) -> None:
-        pass
+        if self._page:
+            await self._page.close()
+            self._page = None
 
     # ── Champion catalogue ─────────────────────────────────────────────────────
 
-    async def _load_champions(self, client: httpx.AsyncClient) -> None:
-        """Load RSL champion catalogue from cat.php."""
-        resp = await client.get(
-            f"{BASE_URL}/cat.php", params={"id": CATEGORY_ID}, timeout=20
-        )
-        resp.raise_for_status()
-        champions = resp.json().get("data", [])
+    async def _load_champions(self) -> None:
+        """Fetch RSL champion list from cat.php (httpx — fast, no session needed)."""
+        async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True) as client:
+            resp = await client.get(
+                f"{BASE_URL}/cat.php", params={"id": CATEGORY_ID}, timeout=20
+            )
+            resp.raise_for_status()
+            champions = resp.json().get("data", [])
 
         self._color_by_name = {}
         self._mythic_champs = []
@@ -107,88 +112,104 @@ class RaidCheapScraper:
                 self._mythic_champs.append((int(c["id"]), name))
 
         logger.info(
-            f"cat.php: {len(champions)} champions total, "
+            f"cat.php: {len(champions)} champions, "
             f"{len(self._mythic_champs)} mythic"
         )
 
-    # ── Account search ─────────────────────────────────────────────────────────
+    # ── Click UI + intercept go.php ────────────────────────────────────────────
 
     async def _search_one_mythic(
-        self,
-        client: httpx.AsyncClient,
-        champ_id: int,
-        champ_name: str,
+        self, champ_id: int, champ_name: str
     ) -> dict[str, dict]:
         """
-        Call go.php for one mythic champion and paginate through ALL results.
+        Click champion card → Click Search → collect all go.php pages.
+        The site auto-loads every page via search_append(); we just intercept.
         Returns {account_username: raw_api_item}.
         """
+        page  = self._page
         found: dict[str, dict] = {}
-        page = 1
 
-        while True:
+        # Clear previous selection
+        try:
+            await page.click("button.clear-btn", timeout=4_000)
+            await page.wait_for_timeout(400)
+        except Exception:
+            pass
+
+        # Find the champion card and click it
+        card = await page.query_selector(f".card-list li[data-id='{champ_id}']")
+        if not card:
+            logger.warning(f"Card not found for {champ_name} (id={champ_id})")
+            return found
+
+        await card.scroll_into_view_if_needed()
+        await card.click()
+        await page.wait_for_timeout(400)
+
+        # Intercept go.php responses (the site calls it for every page automatically)
+        collected: list[dict] = []
+        total_pages: list[int] = [1]
+
+        async def on_response(response: Response) -> None:
+            if "/go.php" not in response.url:
+                return
             try:
-                resp = await client.get(
-                    f"{BASE_URL}/go.php",
-                    params={
-                        "id[]":    str(champ_id),
-                        "num[]":   "1",       # minimum 1 copy of the champion
-                        "game_id": GAME_ID,
-                        "page":    str(page),
-                        "sort":    "price_asc",
-                    },
-                    timeout=30,
-                )
-                if resp.status_code != 200:
-                    logger.warning(
-                        f"go.php HTTP {resp.status_code} for {champ_name} p{page}"
-                    )
-                    break
-                data = resp.json()
-            except Exception as exc:
-                logger.warning(f"go.php error ({champ_name} p{page}): {exc}")
-                break
-
-            if data.get("code") != 1:
-                break
-
+                data = await response.json()
+            except Exception:
+                return
             raw = data.get("data", {})
-
-            # Determine total pages and extract account items
-            if isinstance(raw, dict):
+            if isinstance(raw, dict) and "totalpage" in raw:
                 try:
-                    total_pages = int(raw.get("totalpage", 1))
+                    total_pages[0] = max(total_pages[0], int(raw["totalpage"]))
                 except Exception:
-                    total_pages = 1
-                items = [
-                    v for v in raw.values()
-                    if isinstance(v, dict) and "account" in v
-                ]
+                    pass
+            if data.get("code") == 1:
+                collected.append(raw)
+
+        page.on("response", on_response)
+
+        # Click Search — triggers AJAX + recursive search_append()
+        try:
+            await page.click("button.search-btn", timeout=5_000)
+        except Exception as e:
+            logger.warning(f"Could not click Search for {champ_name}: {e}")
+            page.remove_listener("response", on_response)
+            return found
+
+        # Wait until all pages arrive (search_append auto-paginates, max 60 s)
+        for _ in range(120):
+            await asyncio.sleep(0.5)
+            if len(collected) >= total_pages[0]:
+                await asyncio.sleep(0.8)   # buffer for the very last request
+                break
+
+        page.remove_listener("response", on_response)
+
+        # Extract account items from all collected pages
+        for raw in collected:
+            if isinstance(raw, dict):
+                items = [v for v in raw.values() if isinstance(v, dict) and "account" in v]
             elif isinstance(raw, list):
-                total_pages = 1
                 items = [v for v in raw if isinstance(v, dict) and "account" in v]
             else:
-                break
-
+                continue
             for item in items:
                 acc = str(item.get("account", "")).strip()
                 if acc and acc not in found:
                     found[acc] = item
 
-            logger.debug(f"  {champ_name}: page {page}/{total_pages}, +{len(items)}")
-
-            if page >= total_pages:
-                break
-            page += 1
-            await asyncio.sleep(0.2)
-
+        logger.info(
+            f"  {champ_name}: {len(found)} accounts "
+            f"({len(collected)}/{total_pages[0]} pages)"
+        )
         return found
 
-    # ── Build AccountData from raw API item ────────────────────────────────────
+    # ── Build AccountData ──────────────────────────────────────────────────────
 
-    def _build_account_data(self, acc_id: str, price_usd: float, item: dict) -> AccountData:
-        """Extract champion lists from go.php role data using cat.php colour lookup."""
-        mythics:    list[str] = []
+    def _build_account_data(
+        self, acc_id: str, price_usd: float, item: dict
+    ) -> AccountData:
+        mythics:     list[str] = []
         legendaries: list[str] = []
 
         roles = item.get("role", [])
@@ -199,18 +220,15 @@ class RaidCheapScraper:
             if not isinstance(role, dict):
                 continue
             name  = (role.get("en_name") or "").strip()
-            count = int((role.get("pivot") or {}).get("num", 1))
             if not name:
                 continue
             color = self._color_by_name.get(name.lower(), "")
             if _is_red(color):
-                for _ in range(count):
-                    if name not in mythics:
-                        mythics.append(name)
+                if name not in mythics:
+                    mythics.append(name)
             elif _is_gold(color):
-                for _ in range(count):
-                    if name not in legendaries:
-                        legendaries.append(name)
+                if name not in legendaries:
+                    legendaries.append(name)
 
         return AccountData(
             account_id=acc_id,
@@ -223,36 +241,28 @@ class RaidCheapScraper:
 
     async def fetch_listing(self) -> list[tuple[str, str, float]]:
         """
-        Search all mythic champions via go.php.
+        Navigate to the site, click every mythic champion, collect accounts.
         Returns (account_id, url, price_usd) sorted cheapest first.
-        Populates _ACCOUNT_CACHE for use by fetch_raidcheap_account().
+        Populates _ACCOUNT_CACHE for fetch_raidcheap_account().
         """
         global _ACCOUNT_CACHE
         _ACCOUNT_CACHE = {}
 
-        async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True) as client:
-            # Visit main page first — the server sets a session cookie
-            # that go.php requires; without it every search returns HTTP 500
-            try:
-                await client.get(BASE_URL, timeout=20)
-                logger.debug("Session cookie obtained from main page")
-            except Exception as exc:
-                logger.warning(f"Could not fetch main page for session: {exc}")
+        logger.info("Navigating to raid-cheap.com …")
+        await self._page.goto(BASE_URL, wait_until="networkidle", timeout=30_000)
 
-            await self._load_champions(client)
+        await self._load_champions()
 
-            all_raw: dict[str, dict] = {}
+        all_raw: dict[str, dict] = {}
 
-            for champ_id, champ_name in self._mythic_champs:
-                logger.info(f"Searching: {champ_name} (id={champ_id})")
-                batch = await self._search_one_mythic(client, champ_id, champ_name)
-                new = sum(1 for k in batch if k not in all_raw)
-                all_raw.update({k: v for k, v in batch.items() if k not in all_raw})
-                logger.info(
-                    f"  {champ_name}: {len(batch)} accounts (+{new} new, "
-                    f"total unique: {len(all_raw)})"
-                )
-                await asyncio.sleep(0.3)
+        for champ_id, champ_name in self._mythic_champs:
+            logger.info(f"Searching: {champ_name} (id={champ_id})")
+            batch = await self._search_one_mythic(champ_id, champ_name)
+            new = sum(1 for k in batch if k not in all_raw)
+            all_raw.update({k: v for k, v in batch.items() if k not in all_raw})
+            logger.info(
+                f"  → +{new} new  (total unique: {len(all_raw)})"
+            )
 
         result: list[tuple[str, str, float]] = []
 
@@ -261,13 +271,10 @@ class RaidCheapScraper:
             usd_price = round(price_cny * CNY_TO_USD, 2)
             if usd_price <= 0:
                 continue
-
-            acc_id = f"rc_{acc_name}"
-            url    = f"{BASE_URL}/{acc_name}"
-
+            acc_id   = f"rc_{acc_name}"
+            url      = f"{BASE_URL}/{acc_name}"
             acc_data = self._build_account_data(acc_id, usd_price, item)
             _ACCOUNT_CACHE[acc_id] = acc_data
-
             result.append((acc_id, url, usd_price))
 
         result.sort(key=lambda x: x[2])
@@ -290,8 +297,6 @@ async def fetch_raidcheap_account(
     cached = _ACCOUNT_CACHE.get(account_id)
     if cached:
         return cached
-
-    # Fallback if called before fetch_listing or for an unknown ID
     logger.warning(f"{account_id} not in cache — returning empty AccountData")
     return AccountData(
         account_id=account_id,

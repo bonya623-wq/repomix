@@ -320,58 +320,57 @@ async def main() -> None:
     if not PUBLISHED_FILE.exists():
         save_published({})
 
-    async with RaidCheapScraper() as scraper:
+    profile_dir = config.get("browser_profile_dir", "./browser_profile")
+    headless    = config.get("headless", False)
 
-        if args.parse_only:
-            items = await fetch_raidcheap_list(scraper)
-            items.sort(key=lambda x: x[2])
-            print(f"\nFound {len(items)} accounts (cheapest first):\n")
-            for account_id, detail_url, price in items:
-                acc = await fetch_detail(account_id, detail_url, price)
-                if not acc:
-                    print(f"  {account_id}  ${price:.2f}  ← details unavailable")
-                    continue
-                print(f"{'─' * 65}")
-                print(f"  ID    : {account_id}  |  Price: ${price:.2f}")
-                print(f"  Mythic: {', '.join(acc.mythic_champions) or '—'}")
-                print(f"  Legs  : {', '.join(acc.legendary_champions[:5]) or '—'}")
-                print(f"  Hero level  : {get_hero_level(len(acc.legendary_champions))}")
-                print(f"  Myth level  : {get_myth_level(len(acc.mythic_champions))}")
-                print(f"  TITLE : {format_title(acc)}")
-            return
+    for lock_name in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
+        lock = Path(profile_dir) / lock_name
+        if lock.exists():
+            try:
+                lock.unlink()
+                logger.info(f"Removed stale browser lock: {lock}")
+            except OSError as e:
+                logger.warning(f"Could not remove {lock}: {e}")
 
-        profile_dir = config.get("browser_profile_dir", "./browser_profile")
-        headless = config.get("headless", False)
+    proxy_cfg    = config.get("proxy")
+    proxy_kwargs = {}
+    if proxy_cfg and proxy_cfg.get("server"):
+        proxy_kwargs["proxy"] = {
+            "server":   proxy_cfg["server"],
+            "username": proxy_cfg.get("username", ""),
+            "password": proxy_cfg.get("password", ""),
+        }
+        logger.info(f"G2G: using proxy {proxy_cfg['server']}")
 
-        # Remove Chrome's singleton lock so a fresh instance can start
-        # (leftover from a previous crash or an already-open window)
-        for lock_name in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
-            lock = Path(profile_dir) / lock_name
-            if lock.exists():
-                try:
-                    lock.unlink()
-                    logger.info(f"Removed stale browser lock: {lock}")
-                except OSError as e:
-                    logger.warning(f"Could not remove {lock}: {e}")
+    async with async_playwright() as pw:
+        context = await pw.chromium.launch_persistent_context(
+            user_data_dir=profile_dir,
+            headless=headless,
+            args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
+            viewport={"width": 1280, "height": 900},
+            **proxy_kwargs,
+        )
 
-        proxy_cfg = config.get("proxy")
-        proxy_kwargs = {}
-        if proxy_cfg and proxy_cfg.get("server"):
-            proxy_kwargs["proxy"] = {
-                "server":   proxy_cfg["server"],
-                "username": proxy_cfg.get("username", ""),
-                "password": proxy_cfg.get("password", ""),
-            }
-            logger.info(f"G2G: using proxy {proxy_cfg['server']}")
+        async with RaidCheapScraper(context) as scraper:
 
-        async with async_playwright() as pw:
-            context = await pw.chromium.launch_persistent_context(
-                user_data_dir=profile_dir,
-                headless=headless,
-                args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
-                viewport={"width": 1280, "height": 900},
-                **proxy_kwargs,
-            )
+            if args.parse_only:
+                items = await fetch_raidcheap_list(scraper)
+                items.sort(key=lambda x: x[2])
+                print(f"\nFound {len(items)} accounts (cheapest first):\n")
+                for account_id, detail_url, price in items:
+                    acc = await fetch_detail(account_id, detail_url, price)
+                    if not acc:
+                        print(f"  {account_id}  ${price:.2f}  ← details unavailable")
+                        continue
+                    print(f"{'─' * 65}")
+                    print(f"  ID    : {account_id}  |  Price: ${price:.2f}")
+                    print(f"  Mythic: {', '.join(acc.mythic_champions) or '—'}")
+                    print(f"  Legs  : {', '.join(acc.legendary_champions[:5]) or '—'}")
+                    print(f"  Hero level  : {get_hero_level(len(acc.legendary_champions))}")
+                    print(f"  Myth level  : {get_myth_level(len(acc.mythic_champions))}")
+                    print(f"  TITLE : {format_title(acc)}")
+                await context.close()
+                return
 
             g2g = G2GBot(context)
 

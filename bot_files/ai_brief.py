@@ -150,7 +150,7 @@ def check_lot_safe_ai(description: str, api_key: str = "") -> bool:
         return True
 
 
-
+def generate_brief_ai(
     game_name: str,
     description: str,
     extra_context: str = "",

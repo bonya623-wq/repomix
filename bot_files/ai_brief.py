@@ -17,11 +17,12 @@ _GAME_HINTS = {
         "Strict order for Raid Shadow Legends:\n"
         "1. Power — e.g. '50K power' — FIRST if mentioned\n"
         "2. Gems — e.g. '4300 gems' — if mentioned\n"
-        "3. Champion names — Mythic champions first, then top Legendary champions, up to 4 names total\n"
-        "4. Mythic count + Legendary count — e.g. '3 Myths + 27 Legs'\n"
-        "5. Silver / shards — only if notable\n"
+        "3. Champion names — Mythic champions first, then top Legendary champions, up to 4-5 names total\n"
+        "4. Mythic count + Legendary count — e.g. '3 Myths + 27 Legs' — ONLY if count > 0, skip if zero\n"
+        "5. Silver / shards / energy — only if notable\n"
         "6. Level — e.g. 'Lv65' — LAST\n"
         "IMPORTANT: Champion names (step 3) MUST come before counts (step 4). "
+        "NEVER write '0 Myths' or '0 Legs' — skip zero counts entirely. "
         "Power and Gems come before names only if explicitly stated in the listing."
     ),
     "wow":         (

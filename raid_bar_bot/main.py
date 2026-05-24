@@ -343,6 +343,17 @@ async def main() -> None:
         profile_dir = config.get("browser_profile_dir", "./browser_profile")
         headless = config.get("headless", False)
 
+        # Remove Chrome's singleton lock so a fresh instance can start
+        # (leftover from a previous crash or an already-open window)
+        for lock_name in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
+            lock = Path(profile_dir) / lock_name
+            if lock.exists():
+                try:
+                    lock.unlink()
+                    logger.info(f"Removed stale browser lock: {lock}")
+                except OSError as e:
+                    logger.warning(f"Could not remove {lock}: {e}")
+
         proxy_cfg = config.get("proxy")
         proxy_kwargs = {}
         if proxy_cfg and proxy_cfg.get("server"):

@@ -1,6 +1,5 @@
 {
   "g2g_cookies_file": "cookies_g2g.json",
   "g2g_listing_category": "raid-shadow-legends",
-  "check_interval_minutes": 10,
-  "sources": ["bar", "cheap"]
+  "check_interval_minutes": 10
 }

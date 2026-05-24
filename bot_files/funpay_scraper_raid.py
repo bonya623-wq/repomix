@@ -160,8 +160,14 @@ async def upload_to_postimages(image_path: str, context, game: str = "") -> Opti
         logger.info(f"Postimages: загружаем {image_path}...")
         async with page.expect_file_chooser() as fc_info:
             await page.click("#ddinput")
-        file_chooser = await fc_info.value
+            file_chooser = await fc_info.value
         await file_chooser.set_files(image_path)
+
+        # Ждём пока страница стабилизируется после загрузки файла
+        try:
+            await page.wait_for_load_state("domcontentloaded", timeout=8000)
+        except Exception:
+            pass
 
         # Адаптивный polling: сначала часто, потом реже.
         # Обычно фото появляется за 1-4 сек → не ждём 30 сек зря.
@@ -170,23 +176,31 @@ async def upload_to_postimages(image_path: str, context, game: str = "") -> Opti
         for i, delay in enumerate(_poll_delays):
             await asyncio.sleep(delay)
             _elapsed += delay
-            url = await page.evaluate("""
-                () => {
-                    const inputs = document.querySelectorAll('input')
-                    for(const inp of inputs) {
-                        if(inp.value && inp.value.includes('i.postimg.cc')) return inp.value
+            try:
+                url = await page.evaluate("""
+                    () => {
+                        const inputs = document.querySelectorAll('input')
+                        for(const inp of inputs) {
+                            if(inp.value && inp.value.includes('i.postimg.cc')) return inp.value
+                        }
+                        return null
                     }
-                    return null
-                }
-            """)
+                """)
+            except Exception:
+                # Страница ещё навигируется — ждём следующего цикла
+                logger.info(f"Postimages: страница загружается, ждём... ({i+1}/{len(_poll_delays)})")
+                continue
             if url:
                 logger.info(f"Postimages: Direct link -> {url} (за {_elapsed:.1f}с)")
                 return url
 
-            content = await page.content()
-            if "заблокированы" in content or "blocked" in content.lower():
-                logger.warning("Postimages: обнаружена блокировка")
-                return None
+            try:
+                content = await page.content()
+                if "заблокированы" in content or "blocked" in content.lower():
+                    logger.warning("Postimages: обнаружена блокировка")
+                    return None
+            except Exception:
+                pass
 
             logger.info(f"Postimages: ждём... ({i+1}/{len(_poll_delays)}, {_elapsed:.1f}с)")
 

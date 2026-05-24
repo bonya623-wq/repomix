@@ -3,8 +3,8 @@
   "headless": false,
   "check_interval_minutes": 10,
   "proxy": {
-    "server": "http://91.124.107.127:50100",
-    "username": "bonya624",
-    "password": "27fSPdqM8P"
+    "server": "",
+    "username": "",
+    "password": ""
   }
 }

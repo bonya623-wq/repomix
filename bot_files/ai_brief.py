@@ -15,15 +15,14 @@ logger = logging.getLogger(__name__)
 _GAME_HINTS = {
     "raid":        (
         "Strict order for Raid Shadow Legends:\n"
-        "1. Power — e.g. '50K power' — FIRST, most important\n"
-        "2. Gems — e.g. '4300 gems'\n"
-        "3. Champion names — list Mythic champions first, then top Legendary champions (up to 4 total)\n"
-        "4. Mythic count — e.g. '3 Myths' — only if > 0\n"
-        "5. Legendary count — e.g. '27 Legs'\n"
-        "6. Silver — e.g. '7M silver' — only if notable\n"
-        "7. Level — e.g. 'Lv65' — LAST, least important\n"
-        "IMPORTANT: Power and Gems MUST come before champion names. "
-        "This is critical for search — numbers are never censored, names sometimes are."
+        "1. Power — e.g. '50K power' — FIRST if mentioned\n"
+        "2. Gems — e.g. '4300 gems' — if mentioned\n"
+        "3. Champion names — Mythic champions first, then top Legendary champions, up to 4 names total\n"
+        "4. Mythic count + Legendary count — e.g. '3 Myths + 27 Legs'\n"
+        "5. Silver / shards — only if notable\n"
+        "6. Level — e.g. 'Lv65' — LAST\n"
+        "IMPORTANT: Champion names (step 3) MUST come before counts (step 4). "
+        "Power and Gems come before names only if explicitly stated in the listing."
     ),
     "wow":         (
         "Strict priority order for WoW account listings:\n"

@@ -82,45 +82,78 @@ class RaidCheapScraper:
 
     async def _find_mythic_cards(self, page: Page) -> list:
         """
-        Return locators for all MYTHIC champion cards on the page.
+        Return a list of card descriptors for all MYTHIC champion cards.
 
-        Mythic cards have a RED border/frame in the screenshot.
-        We try several selectors to find them. If nothing works,
-        a debug screenshot is saved so you can check what the page looks like
-        and tell us the correct CSS class.
+        Mythic cards have a RED border. Instead of guessing CSS class names,
+        we use JavaScript to find every element whose computed border colour
+        is red-ish (R>150, G<100, B<100) and whose bounding box looks like a
+        champion card (roughly square, 40–250 px wide).
+
+        Each descriptor is a dict:
+          {"x": float, "y": float}   ← centre point to click
         """
-        # Selectors to try — ordered from most specific to broadest.
-        # The red border on mythic cards is the visual cue.
-        # Common patterns in such sites:
-        attempts = [
-            # 1. Explicit rarity attribute
-            "[data-rarity='mythic'] img",
-            "[data-rarity='6'] img",
-            "[data-rarity='5'] img",
-            ".mythic img",
-            ".rarity-mythic img",
-            "[class*='mythic'] img",
-            # 2. Red border via class name
-            ".card-red img",
-            ".border-red img",
-            "[class*='red'] img",
-            # 3. The card container itself (clickable parent, not the img)
-            "[data-rarity='mythic']",
-            "[class*='mythic']",
-        ]
+        # Scroll to top so all cards are at predictable Y positions
+        await page.evaluate("window.scrollTo(0, 0)")
+        await asyncio.sleep(0.3)
 
-        for sel in attempts:
-            cards = await page.locator(sel).all()
-            if cards:
-                logger.info(f"Found {len(cards)} mythic cards via selector: {sel!r}")
-                return cards
+        coords: list[dict] = await page.evaluate("""
+            () => {
+                const isRed = (color) => {
+                    if (!color || color === 'none' || color === 'transparent') return false;
+                    const m = color.match(/rgb\\((\\d+),\\s*(\\d+),\\s*(\\d+)\\)/);
+                    if (!m) return false;
+                    return (+m[1] > 150 && +m[2] < 100 && +m[3] < 100);
+                };
 
-        # Nothing matched — save screenshot and log the first 3000 chars of HTML
+                const results = [];
+                const seen = new Set();
+
+                for (const el of document.querySelectorAll('*')) {
+                    const cs = window.getComputedStyle(el);
+                    const red = [
+                        cs.borderColor, cs.borderTopColor,
+                        cs.borderRightColor, cs.borderBottomColor,
+                        cs.borderLeftColor, cs.outlineColor,
+                    ].some(isRed);
+                    if (!red) continue;
+
+                    const r = el.getBoundingClientRect();
+                    // Must look like a champion portrait card
+                    if (r.width < 40 || r.width > 250 || r.height < 40 || r.height > 350) continue;
+
+                    // De-duplicate by grid cell (±10 px)
+                    const key = `${Math.round(r.x/10)},${Math.round(r.y/10)}`;
+                    if (seen.has(key)) continue;
+                    seen.add(key);
+
+                    results.push({
+                        x: r.x + r.width  / 2,
+                        y: r.y + r.height / 2,
+                        w: r.width,
+                        h: r.height,
+                        tag: el.tagName,
+                        cls: el.className.toString().slice(0, 60),
+                    });
+                }
+                // Sort top-to-bottom, left-to-right (natural grid order)
+                results.sort((a, b) => a.y - b.y || a.x - b.x);
+                return results;
+            }
+        """)
+
+        if coords:
+            logger.info(
+                f"Found {len(coords)} mythic cards via red-border JS detection. "
+                f"First card: tag={coords[0]['tag']} cls={coords[0]['cls']!r} "
+                f"size={coords[0]['w']:.0f}x{coords[0]['h']:.0f}"
+            )
+            return coords
+
+        # Nothing found — save debug info
         await page.screenshot(path="raidcheap_mythic_not_found.png")
         html_preview = (await page.content())[:3000]
         logger.error(
-            "Could not find mythic champion cards on raid-cheap.com.\n"
-            "Screenshot saved to raidcheap_mythic_not_found.png\n"
+            "No mythic cards found — check raidcheap_mythic_not_found.png\n"
             f"HTML preview:\n{html_preview}"
         )
         return []
@@ -213,12 +246,11 @@ class RaidCheapScraper:
         return results
 
     async def _search_one_mythic(
-        self, page: Page, card, index: int, total: int
+        self, page: Page, card: dict, index: int, total: int
     ) -> dict[str, tuple[str, float]]:
-        """Click one mythic card, search, collect, clear. Return results dict."""
+        """Click one mythic card (by centre coordinates), search, collect, clear."""
         try:
-            await card.scroll_into_view_if_needed()
-            await card.click(timeout=3_000)
+            await page.mouse.click(card["x"], card["y"])
         except Exception as e:
             logger.warning(f"Could not click card {index}: {e}")
             return {}
@@ -259,12 +291,17 @@ class RaidCheapScraper:
             all_results: dict[str, tuple[str, float]] = {}
 
             for i, card in enumerate(mythic_cards, 1):
+                # After Clear the page reloads — re-detect cards to keep coords fresh
+                if i > 1:
+                    fresh = await self._find_mythic_cards(page)
+                    if i - 1 < len(fresh):
+                        card = fresh[i - 1]
+
                 batch = await self._search_one_mythic(page, card, i, len(mythic_cards))
                 for rid, (url, price) in batch.items():
                     if rid not in all_results:
                         all_results[rid] = (url, price)
 
-                # Small pause — be polite to the server
                 await asyncio.sleep(1)
 
             final = [

@@ -84,77 +84,142 @@ class RaidCheapScraper:
         """
         Return a list of card descriptors for all MYTHIC champion cards.
 
-        Mythic cards have a RED border. Instead of guessing CSS class names,
-        we use JavaScript to find every element whose computed border colour
-        is red-ish (R>150, G<100, B<100) and whose bounding box looks like a
-        champion card (roughly square, 40–250 px wide).
+        Strategy (in priority order):
+          1. Keyword match — any attribute/class contains 'mythic', 'rarity5', etc.
+          2. Red-border detection — getComputedStyle shows red-ish color on element
+             or up to 3 ancestor elements.
 
-        Each descriptor is a dict:
-          {"x": float, "y": float}   ← centre point to click
+        On failure saves raidcheap_debug.html + raidcheap_mythic_not_found.png.
         """
-        # Scroll to top so all cards are at predictable Y positions
+        # Scroll down to trigger any lazy-loaded content, then return to top
+        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        await asyncio.sleep(0.8)
         await page.evaluate("window.scrollTo(0, 0)")
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(0.5)
+
+        # Wait for champion images to load (jQuery renders cards async)
+        try:
+            await page.wait_for_function(
+                "() => document.querySelectorAll('img').length > 5",
+                timeout=15000,
+            )
+        except Exception:
+            pass
+        await asyncio.sleep(2.0)
 
         coords: list[dict] = await page.evaluate("""
             () => {
-                const isRed = (color) => {
-                    if (!color || color === 'none' || color === 'transparent') return false;
-                    const m = color.match(/rgb\\((\\d+),\\s*(\\d+),\\s*(\\d+)\\)/);
-                    if (!m) return false;
-                    return (+m[1] > 150 && +m[2] < 100 && +m[3] < 100);
+                // ── colour helpers ──────────────────────────────────────────
+                const isRedish = (str) => {
+                    if (!str || str === 'none' || str === 'transparent') return false;
+                    // rgb() / rgba() — red must dominate and be bright enough
+                    const rgbs = str.match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/g) || [];
+                    for (const rgb of rgbs) {
+                        const vals = rgb.match(/\\d+/g).map(Number);
+                        const r = vals[0], g = vals[1], b = vals[2];
+                        if (r > 100 && r > g + 50 && r > b + 50) return true;
+                    }
+                    // hex: #c00, #cc0000, #d00, #e00, #f00, #ff0000…
+                    if (/#[cCdDeEfF][0-5][0-5]([0-9a-fA-F]{3})?/.test(str)) return true;
+                    // keyword 'red'
+                    if (/\\bred\\b/i.test(str)) return true;
+                    return false;
                 };
 
+                const getRedProp = (el) => {
+                    if (!el) return null;
+                    try {
+                        const cs = window.getComputedStyle(el);
+                        const props = [
+                            cs.borderColor, cs.borderTopColor, cs.borderRightColor,
+                            cs.borderBottomColor, cs.borderLeftColor,
+                            cs.outlineColor, cs.boxShadow,
+                            el.getAttribute('style') || '',
+                        ];
+                        return props.find(v => isRedish(v)) || null;
+                    } catch(e) { return null; }
+                };
+
+                // ── keyword helpers ─────────────────────────────────────────
+                const MYTHIC_KW = [
+                    'mythic', 'myth', 'rarity5', 'rarity-5', 'tier5', 'tier-5',
+                    'rank5', 'rank-5', 'ss-rank', 'ssrank', '神话', 'divine',
+                ];
+                const hasMythicKeyword = (el) => {
+                    if (!el) return false;
+                    const names = el.getAttributeNames ? el.getAttributeNames() : [];
+                    const attrBlob = names.map(n => el.getAttribute(n) || '').join(' ').toLowerCase()
+                        + ' ' + (el.className || '').toString().toLowerCase()
+                        + ' ' + (el.id || '').toLowerCase();
+                    return MYTHIC_KW.some(kw => attrBlob.includes(kw));
+                };
+
+                // ── scan all visible elements ───────────────────────────────
                 const results = [];
                 const seen = new Set();
 
                 for (const el of document.querySelectorAll('*')) {
-                    const cs = window.getComputedStyle(el);
-                    const red = [
-                        cs.borderColor, cs.borderTopColor,
-                        cs.borderRightColor, cs.borderBottomColor,
-                        cs.borderLeftColor, cs.outlineColor,
-                    ].some(isRed);
-                    if (!red) continue;
-
                     const r = el.getBoundingClientRect();
-                    // Must look like a champion portrait card
-                    if (r.width < 40 || r.width > 250 || r.height < 40 || r.height > 350) continue;
+                    // Size filter: card-like (30–350 px wide, 30–400 px tall)
+                    if (!r.width || r.width < 30 || r.width > 350
+                                 || r.height < 30 || r.height > 400) continue;
+                    // Must be near / inside the viewport
+                    if (r.top > window.innerHeight + 200 || r.bottom < -50) continue;
 
-                    // De-duplicate by grid cell (±10 px)
-                    const key = `${Math.round(r.x/10)},${Math.round(r.y/10)}`;
+                    let reason = null;
+
+                    // Priority 1: mythic keyword in any attribute
+                    if (hasMythicKeyword(el) || hasMythicKeyword(el.parentElement)) {
+                        reason = 'keyword';
+                    }
+                    // Priority 2: red CSS on element or up to 3 ancestors
+                    if (!reason) {
+                        let cur = el;
+                        for (let i = 0; i < 3 && cur; i++, cur = cur.parentElement) {
+                            const prop = getRedProp(cur);
+                            if (prop) {
+                                reason = 'red@' + i + ':' + prop.slice(0, 30);
+                                break;
+                            }
+                        }
+                    }
+
+                    if (!reason) continue;
+
+                    // De-duplicate by 20 px grid
+                    const key = Math.round(r.x / 20) + ',' + Math.round(r.y / 20);
                     if (seen.has(key)) continue;
                     seen.add(key);
 
                     results.push({
                         x: r.x + r.width  / 2,
                         y: r.y + r.height / 2,
-                        w: r.width,
-                        h: r.height,
+                        w: r.width, h: r.height,
                         tag: el.tagName,
-                        cls: el.className.toString().slice(0, 60),
+                        cls: (el.className || '').toString().slice(0, 80),
+                        reason,
                     });
                 }
-                // Sort top-to-bottom, left-to-right (natural grid order)
                 results.sort((a, b) => a.y - b.y || a.x - b.x);
                 return results;
             }
         """)
 
         if coords:
-            logger.info(
-                f"Found {len(coords)} mythic cards via red-border JS detection. "
-                f"First card: tag={coords[0]['tag']} cls={coords[0]['cls']!r} "
-                f"size={coords[0]['w']:.0f}x{coords[0]['h']:.0f}"
-            )
+            sample = [(c["tag"], c["cls"][:30], f"{c['w']:.0f}x{c['h']:.0f}", c["reason"])
+                      for c in coords[:5]]
+            logger.info(f"Found {len(coords)} mythic cards. Sample: {sample}")
             return coords
 
-        # Nothing found — save debug info
-        await page.screenshot(path="raidcheap_mythic_not_found.png")
-        html_preview = (await page.content())[:3000]
+        # Nothing found — save comprehensive debug artefacts
+        await page.screenshot(path="raidcheap_mythic_not_found.png", full_page=True)
+        html = await page.content()
+        with open("raidcheap_debug.html", "w", encoding="utf-8") as _f:
+            _f.write(html)
         logger.error(
-            "No mythic cards found — check raidcheap_mythic_not_found.png\n"
-            f"HTML preview:\n{html_preview}"
+            f"No mythic cards found (URL: {page.url}, HTML: {len(html)} bytes). "
+            "Saved raidcheap_mythic_not_found.png and raidcheap_debug.html — "
+            "open the HTML in a browser to inspect the page structure."
         )
         return []
 

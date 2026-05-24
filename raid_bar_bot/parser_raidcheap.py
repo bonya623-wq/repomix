@@ -80,146 +80,68 @@ class RaidCheapScraper:
     # Find mythic cards
     # ------------------------------------------------------------------
 
+    # JS helper shared by _find and _click
+    _MYTHIC_JS = """
+        const isMythicCard = (el) => {
+            // Cards are <div class="imgcont" style="background-color:#RRGGBB">
+            // Mythic color: #FF3300 (orange-red).  We detect by checking that
+            // the inline background-color hex has R > 150, R > G*2, R > B*2.
+            const m = (el.getAttribute('style') || '').match(
+                /background-color:#([0-9a-fA-F]{6})/i
+            );
+            if (!m) return false;
+            const h = m[1];
+            const r = parseInt(h.slice(0,2), 16);
+            const g = parseInt(h.slice(2,4), 16);
+            const b = parseInt(h.slice(4,6), 16);
+            return r > 150 && r > g * 2 && r > b * 2;
+        };
+        const mythicCards = () =>
+            Array.from(document.querySelectorAll('div.imgcont')).filter(isMythicCard);
+    """
+
     async def _find_mythic_cards(self, page: Page) -> list:
         """
-        Return a list of card descriptors for all MYTHIC champion cards.
+        Return [{idx: N}] for every mythic champion card in the filter grid.
 
-        Strategy (in priority order):
-          1. Keyword match — any attribute/class contains 'mythic', 'rarity5', etc.
-          2. Red-border detection — getComputedStyle shows red-ish color on element
-             or up to 3 ancestor elements.
-
-        On failure saves raidcheap_debug.html + raidcheap_mythic_not_found.png.
+        The site renders cards as:
+            <div class="imgcont" style="background-color:#FF3300"><img …></div>
+        Mythic color is #FF3300 (orange-red, R>150, R>G*2, R>B*2).
+        We store the DOM index so _search_one_mythic can JS-click + scrollIntoView
+        without any viewport/coordinate issues.
         """
-        # Scroll down to trigger any lazy-loaded content, then return to top
-        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-        await asyncio.sleep(0.8)
         await page.evaluate("window.scrollTo(0, 0)")
-        await asyncio.sleep(0.5)
 
-        # Wait for champion images to load (jQuery renders cards async)
+        # Wait for jQuery to render the card grid
         try:
             await page.wait_for_function(
-                "() => document.querySelectorAll('img').length > 5",
+                "() => document.querySelectorAll('div.imgcont').length > 5",
                 timeout=15000,
             )
         except Exception:
             pass
-        await asyncio.sleep(2.0)
+        await asyncio.sleep(1.5)
 
-        coords: list[dict] = await page.evaluate("""
-            () => {
-                // ── colour helpers ──────────────────────────────────────────
-                const isRedish = (str) => {
-                    if (!str || str === 'none' || str === 'transparent') return false;
-                    // rgb() / rgba() — red must dominate and be bright enough
-                    const rgbs = str.match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/g) || [];
-                    for (const rgb of rgbs) {
-                        const vals = rgb.match(/\\d+/g).map(Number);
-                        const r = vals[0], g = vals[1], b = vals[2];
-                        if (r > 100 && r > g + 50 && r > b + 50) return true;
-                    }
-                    // hex: #c00, #cc0000, #d00, #e00, #f00, #ff0000…
-                    if (/#[cCdDeEfF][0-5][0-5]([0-9a-fA-F]{3})?/.test(str)) return true;
-                    // keyword 'red'
-                    if (/\\bred\\b/i.test(str)) return true;
-                    return false;
-                };
+        count: int = await page.evaluate(
+            self._MYTHIC_JS + "mythicCards().length;"
+        )
 
-                const getRedProp = (el) => {
-                    if (!el) return null;
-                    try {
-                        const cs = window.getComputedStyle(el);
-                        const props = [
-                            cs.borderColor, cs.borderTopColor, cs.borderRightColor,
-                            cs.borderBottomColor, cs.borderLeftColor,
-                            cs.outlineColor, cs.boxShadow,
-                            el.getAttribute('style') || '',
-                        ];
-                        return props.find(v => isRedish(v)) || null;
-                    } catch(e) { return null; }
-                };
+        if count > 0:
+            logger.info(f"Found {count} mythic champion cards (background-color #FF3300)")
+            return [{"idx": i} for i in range(count)]
 
-                // ── keyword helpers ─────────────────────────────────────────
-                const MYTHIC_KW = [
-                    'mythic', 'myth', 'rarity5', 'rarity-5', 'tier5', 'tier-5',
-                    'rank5', 'rank-5', 'ss-rank', 'ssrank', '神话', 'divine',
-                ];
-                const hasMythicKeyword = (el) => {
-                    if (!el) return false;
-                    const names = el.getAttributeNames ? el.getAttributeNames() : [];
-                    const attrBlob = names.map(n => el.getAttribute(n) || '').join(' ').toLowerCase()
-                        + ' ' + (el.className || '').toString().toLowerCase()
-                        + ' ' + (el.id || '').toLowerCase();
-                    return MYTHIC_KW.some(kw => attrBlob.includes(kw));
-                };
-
-                // ── scan all visible elements ───────────────────────────────
-                const results = [];
-                const seen = new Set();
-
-                for (const el of document.querySelectorAll('*')) {
-                    const r = el.getBoundingClientRect();
-                    // Size filter: card-like (30–350 px wide, 30–400 px tall)
-                    if (!r.width || r.width < 30 || r.width > 350
-                                 || r.height < 30 || r.height > 400) continue;
-                    // Must be near / inside the viewport
-                    if (r.top > window.innerHeight + 200 || r.bottom < -50) continue;
-
-                    let reason = null;
-
-                    // Priority 1: mythic keyword in any attribute
-                    if (hasMythicKeyword(el) || hasMythicKeyword(el.parentElement)) {
-                        reason = 'keyword';
-                    }
-                    // Priority 2: red CSS on element or up to 3 ancestors
-                    if (!reason) {
-                        let cur = el;
-                        for (let i = 0; i < 3 && cur; i++, cur = cur.parentElement) {
-                            const prop = getRedProp(cur);
-                            if (prop) {
-                                reason = 'red@' + i + ':' + prop.slice(0, 30);
-                                break;
-                            }
-                        }
-                    }
-
-                    if (!reason) continue;
-
-                    // De-duplicate by 20 px grid
-                    const key = Math.round(r.x / 20) + ',' + Math.round(r.y / 20);
-                    if (seen.has(key)) continue;
-                    seen.add(key);
-
-                    results.push({
-                        x: r.x + r.width  / 2,
-                        y: r.y + r.height / 2,
-                        w: r.width, h: r.height,
-                        tag: el.tagName,
-                        cls: (el.className || '').toString().slice(0, 80),
-                        reason,
-                    });
-                }
-                results.sort((a, b) => a.y - b.y || a.x - b.x);
-                return results;
-            }
-        """)
-
-        if coords:
-            sample = [(c["tag"], c["cls"][:30], f"{c['w']:.0f}x{c['h']:.0f}", c["reason"])
-                      for c in coords[:5]]
-            logger.info(f"Found {len(coords)} mythic cards. Sample: {sample}")
-            return coords
-
-        # Nothing found — save comprehensive debug artefacts
+        # Nothing found — save debug artefacts
+        total_imgcont: int = await page.evaluate(
+            "document.querySelectorAll('div.imgcont').length"
+        )
         await page.screenshot(path="raidcheap_mythic_not_found.png", full_page=True)
         html = await page.content()
         with open("raidcheap_debug.html", "w", encoding="utf-8") as _f:
             _f.write(html)
         logger.error(
-            f"No mythic cards found (URL: {page.url}, HTML: {len(html)} bytes). "
-            "Saved raidcheap_mythic_not_found.png and raidcheap_debug.html — "
-            "open the HTML in a browser to inspect the page structure."
+            f"No mythic cards found (URL: {page.url}, "
+            f"total div.imgcont on page: {total_imgcont}). "
+            "Saved raidcheap_mythic_not_found.png and raidcheap_debug.html."
         )
         return []
 
@@ -313,11 +235,19 @@ class RaidCheapScraper:
     async def _search_one_mythic(
         self, page: Page, card: dict, index: int, total: int
     ) -> dict[str, tuple[str, float]]:
-        """Click one mythic card (by centre coordinates), search, collect, clear."""
-        try:
-            await page.mouse.click(card["x"], card["y"])
-        except Exception as e:
-            logger.warning(f"Could not click card {index}: {e}")
+        """JS-scroll-and-click the Nth mythic card, search, collect, clear."""
+        clicked: bool = await page.evaluate(
+            self._MYTHIC_JS + f"""
+            const cards = mythicCards();
+            const el = cards[{card['idx']}];
+            if (!el) return false;
+            el.scrollIntoView({{block: 'center', behavior: 'instant'}});
+            el.click();
+            return true;
+            """
+        )
+        if not clicked:
+            logger.warning(f"Could not JS-click mythic card idx={card['idx']} ({index}/{total})")
             return {}
 
         ok = await self._click_search_btn(page)
@@ -349,19 +279,12 @@ class RaidCheapScraper:
 
             mythic_cards = await self._find_mythic_cards(page)
             if not mythic_cards:
-                logger.error("No mythic cards found — check raidcheap_mythic_not_found.png")
                 return []
 
             logger.info(f"Starting mythic-by-mythic search ({len(mythic_cards)} mythics)")
             all_results: dict[str, tuple[str, float]] = {}
 
             for i, card in enumerate(mythic_cards, 1):
-                # After Clear the page reloads — re-detect cards to keep coords fresh
-                if i > 1:
-                    fresh = await self._find_mythic_cards(page)
-                    if i - 1 < len(fresh):
-                        card = fresh[i - 1]
-
                 batch = await self._search_one_mythic(page, card, i, len(mythic_cards))
                 for rid, (url, price) in batch.items():
                     if rid not in all_results:

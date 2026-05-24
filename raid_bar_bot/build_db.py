@@ -1,7 +1,7 @@
 """
 One-time setup script — build the RSL champion portrait database.
 
-Source: raid-shadow-legends.fandom.com (official RSL wiki, globally accessible)
+Source: raidshadowlegends.fandom.com (official RSL wiki, globally accessible)
 Uses the MediaWiki API — no scraping, no proxy needed.
 
 Downloads every champion portrait, computes a perceptual hash (pHash) for each,
@@ -43,53 +43,101 @@ HEADERS = {
     )
 }
 
-FANDOM_API = "https://raid-shadow-legends.fandom.com/api.php"
+# Redirect from raid-shadow-legends.fandom.com → raidshadowlegends.fandom.com
+# httpx follows it automatically; we point directly at the destination
+FANDOM_API = "https://raidshadowlegends.fandom.com/api.php"
 
 
 # ---------------------------------------------------------------------------
-# Fetch champion list via MediaWiki API
+# MediaWiki API helpers
 # ---------------------------------------------------------------------------
 
-async def fetch_champion_list(client: httpx.AsyncClient) -> list[tuple[str, str]]:
-    """
-    Returns [(english_name, portrait_url), ...] for every RSL champion.
+async def _api_get(client: httpx.AsyncClient, params: dict) -> dict:
+    resp = await client.get(FANDOM_API, params=params, timeout=30)
+    resp.raise_for_status()
+    return resp.json()
 
-    Uses the MediaWiki generator API to list all pages in Category:Champions
-    and fetch their lead image (the in-game portrait) in one paginated request.
-    """
-    champions: dict[str, str] = {}
+
+async def get_subcategories(client: httpx.AsyncClient, category: str) -> list[str]:
+    """Return all direct subcategory names inside a given category."""
+    subcats: list[str] = []
     params: dict = {
-        "action":     "query",
-        "generator":  "categorymembers",
-        "gcmtitle":   "Category:Champions",
-        "gcmtype":    "page",
-        "gcmlimit":   "50",
-        "prop":       "pageimages",
-        "pithumbsize": "300",
-        "format":     "json",
+        "action":   "query",
+        "list":     "categorymembers",
+        "cmtitle":  f"Category:{category}",
+        "cmtype":   "subcat",
+        "cmlimit":  "500",
+        "format":   "json",
     }
-
-    page_num = 0
     while True:
-        page_num += 1
-        logger.info(f"  API page {page_num} — {len(champions)} champions so far…")
-        resp = await client.get(FANDOM_API, params=params, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-
-        for page in data.get("query", {}).get("pages", {}).values():
-            name  = page.get("title", "").strip()
-            thumb = page.get("thumbnail", {}).get("source", "")
-            # Skip category/template pages; champion names are 2–40 chars
-            if name and thumb and 2 <= len(name) <= 40:
-                champions[name] = thumb
-
+        data = await _api_get(client, params)
+        for item in data.get("query", {}).get("categorymembers", []):
+            title = item.get("title", "")
+            if title.startswith("Category:"):
+                subcats.append(title[len("Category:"):])
         if "continue" not in data:
             break
         params.update(data["continue"])
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(0.2)
+    return subcats
 
-    logger.info(f"Total champions found: {len(champions)}")
+
+async def get_pages_with_images(
+    client: httpx.AsyncClient, category: str
+) -> dict[str, str]:
+    """Return {champion_name: thumbnail_url} for all pages in a category."""
+    result: dict[str, str] = {}
+    params: dict = {
+        "action":      "query",
+        "generator":   "categorymembers",
+        "gcmtitle":    f"Category:{category}",
+        "gcmtype":     "page",
+        "gcmlimit":    "50",
+        "prop":        "pageimages",
+        "pithumbsize": "300",
+        "format":      "json",
+    }
+    while True:
+        data = await _api_get(client, params)
+        for page in data.get("query", {}).get("pages", {}).values():
+            name  = page.get("title", "").strip()
+            thumb = page.get("thumbnail", {}).get("source", "")
+            if name and thumb and 2 <= len(name) <= 50:
+                result[name] = thumb
+        if "continue" not in data:
+            break
+        params.update(data["continue"])
+        await asyncio.sleep(0.2)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Fetch all champions (two-level: parent category → subcategories → pages)
+# ---------------------------------------------------------------------------
+
+async def fetch_champion_list(client: httpx.AsyncClient) -> list[tuple[str, str]]:
+    champions: dict[str, str] = {}
+
+    # Level 1 — try pages directly in Category:Champions
+    logger.info("Checking Category:Champions for direct pages…")
+    direct = await get_pages_with_images(client, "Champions")
+    champions.update(direct)
+    logger.info(f"  Direct pages: {len(direct)}")
+
+    # Level 2 — get subcategories (factions) and pull pages from each
+    logger.info("Fetching subcategories of Category:Champions…")
+    subcats = await get_subcategories(client, "Champions")
+    logger.info(f"  Found {len(subcats)} subcategories: {subcats[:5]} …")
+
+    for subcat in subcats:
+        pages = await get_pages_with_images(client, subcat)
+        before = len(champions)
+        champions.update(pages)
+        added = len(champions) - before
+        logger.info(f"  [{subcat}] +{added} champions (total {len(champions)})")
+        await asyncio.sleep(0.1)
+
+    logger.info(f"Total unique champions: {len(champions)}")
     return list(champions.items())
 
 
@@ -124,7 +172,11 @@ async def build() -> None:
         champions = await fetch_champion_list(client)
 
         if not champions:
-            logger.error("No champions found — check your internet connection.")
+            logger.error(
+                "No champions found.\n"
+                "Open https://raidshadowlegends.fandom.com/wiki/Category:Champions\n"
+                "and check what subcategories/pages are listed there."
+            )
             return
 
         db: dict[str, str] = dict(existing)

@@ -26,6 +26,7 @@ from playwright.async_api import Browser, BrowserContext, Page, async_playwright
 
 from parser import AccountData, _parse_number, _parse_silver_millions
 from translator import translate_to_en
+import champion_matcher
 
 logger = logging.getLogger(__name__)
 
@@ -392,12 +393,50 @@ async def fetch_raidcheap_account(
             resp = await client.get(detail_url)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, "lxml")
+
+            # ── Identify champions by portrait image matching ─────────────
+            # This is the primary method — no translation needed.
+            # Each RSL champion has a unique portrait identical in all languages.
+            mythics: list[str] = []
+            legendaries: list[str] = []
+
+            if champion_matcher.db_loaded():
+                # Collect all portrait image URLs from the page
+                portrait_urls: list[tuple[str, str]] = []  # (full_url, context_text)
+                for img in soup.find_all("img", src=True):
+                    src: str = img["src"]
+                    # Skip nav/UI images, keep only portrait-sized images
+                    if any(s in src.lower() for s in ("logo", "icon", "btn", "bg", "banner")):
+                        continue
+                    full = src if src.startswith("http") else BASE_URL + src
+                    # Try to get surrounding context to determine rarity
+                    parent_text = ""
+                    p = img.parent
+                    for _ in range(4):
+                        if p:
+                            parent_text = p.get_text(" ", strip=True).lower()
+                            p = p.parent
+                    portrait_urls.append((full, parent_text))
+
+                for img_url, context in portrait_urls:
+                    name = await champion_matcher.find_by_url(img_url, client)
+                    if not name:
+                        continue
+                    # Assign to mythic or legendary based on context
+                    if "mythic" in context or "神话" in context:
+                        if name not in mythics:
+                            mythics.append(name)
+                    else:
+                        if name not in legendaries and name not in mythics:
+                            legendaries.append(name)
+
+            # ── Fallback: text translation (if DB not built or image fails) ─
             raw = soup.get_text(separator="\n")
             translated = translate_to_en(raw)
             combined = translated
 
             for img in soup.find_all("img", src=True):
-                src: str = img["src"]
+                src = img["src"]
                 if any(s in src.lower() for s in ("logo", "icon", "avatar", "banner", "btn")):
                     continue
                 full = src if src.startswith("http") else BASE_URL + src
@@ -405,17 +444,17 @@ async def fetch_raidcheap_account(
                 if ocr.strip():
                     combined += "\n\n" + ocr
 
-        mythics: list[str] = []
-        legendaries: list[str] = []
-        mm = re.search(r"Mythic[^:]*:([^\n]{5,200})", combined, re.I)
-        if mm:
-            mythics = [c.strip() for c in re.split(r"[,，•·]", mm.group(1)) if c.strip()]
-        lm = re.search(r"Legendary[^:]*:([^\n]{5,500})", combined, re.I)
-        if lm:
-            legendaries = [
-                c.strip() for c in re.split(r"[,，•·]", lm.group(1))
-                if c.strip() and c.strip() not in mythics
-            ]
+            # Only use text-based extraction if image matching found nothing
+            if not mythics and not legendaries:
+                mm = re.search(r"Mythic[^:]*:([^\n]{5,200})", combined, re.I)
+                if mm:
+                    mythics = [c.strip() for c in re.split(r"[,，•·]", mm.group(1)) if c.strip()]
+                lm = re.search(r"Legendary[^:]*:([^\n]{5,500})", combined, re.I)
+                if lm:
+                    legendaries = [
+                        c.strip() for c in re.split(r"[,，•·]", lm.group(1))
+                        if c.strip() and c.strip() not in mythics
+                    ]
 
         return AccountData(
             account_id=account_id,

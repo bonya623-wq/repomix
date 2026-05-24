@@ -1380,13 +1380,13 @@ class G2GBot:
                 await page.keyboard.press("Control+a")
                 await search_input.fill(search_query)
 
-                # 5 попыток на каждый запрос (ждём 3с между ними)
-                for attempt in range(5):
+                # 2 попытки на каждый запрос (ждём 3с между ними)
+                for attempt in range(2):
                     await asyncio.sleep(3)
                     rows: list = await page.evaluate(self._JS_ROWS_ID_TITLE)
                     new_rows = [r for r in rows if r["id"] not in known_ids]
                     logger.info(
-                        f"G2G title-search: попытка {attempt + 1}/5, "
+                        f"G2G title-search: попытка {attempt + 1}/2, "
                         f"строк: {len(rows)}, новых: {len(new_rows)}"
                     )
 

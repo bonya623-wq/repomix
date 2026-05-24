@@ -251,6 +251,18 @@ class RaidCheapScraper:
         logger.info("Navigating to raid-cheap.com …")
         await self._page.goto(BASE_URL, wait_until="networkidle", timeout=30_000)
 
+        # Static page HTML may have an outdated card list — click the Champions
+        # tab to trigger the cat.php AJAX reload and get all current champions.
+        try:
+            async with self._page.expect_response(
+                lambda r: "cat.php" in r.url, timeout=10_000
+            ):
+                await self._page.click(".top-nav a[data-id='51']", timeout=5_000)
+            await self._page.wait_for_timeout(600)
+            logger.debug("Card list refreshed via Champions tab click")
+        except Exception as e:
+            logger.warning(f"Could not refresh card list: {e}")
+
         await self._load_champions()
 
         all_raw: dict[str, dict] = {}

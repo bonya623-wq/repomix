@@ -1,5 +1,5 @@
 {
-  "g2g_cookies_file": "cookies_g2g.json",
-  "g2g_listing_category": "raid-shadow-legends",
+  "browser_profile_dir": "./browser_profile",
+  "headless": false,
   "check_interval_minutes": 10
 }

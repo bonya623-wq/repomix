@@ -1,17 +1,15 @@
 """
 Parser for https://raid-cheap.com — Chinese RSL account marketplace.
 
-Data extraction strategy (in priority order):
-  1. HTML text on the listing page (translated CN→EN)
-  2. OCR of account screenshots (images uploaded by the seller)
-  3. Regex over translated text for resources and numbers
+The site requires champion selection before showing any accounts.
+We use Playwright to:
+  1. Open the page (full browser, not a simple HTTP request)
+  2. Click ALL champion portrait cards to select them
+  3. Click "Search"
+  4. Collect all account listings from the results
+  5. Visit each account detail page and extract data
 
-Image OCR requires pytesseract + Tesseract with chi_sim+eng packs:
-  Ubuntu:  sudo apt install tesseract-ocr tesseract-ocr-chi-sim
-  Windows: https://github.com/UB-Mannheim/tesseract/wiki
-  Then:    pip install pytesseract Pillow
-
-OCR is optional — if not available, only HTML text is parsed.
+Chinese text is auto-translated to English via deep-translator.
 """
 
 import io
@@ -21,6 +19,7 @@ from typing import Optional
 
 import httpx
 from bs4 import BeautifulSoup
+from playwright.async_api import Browser, BrowserContext, Page, async_playwright
 
 from parser import AccountData, _parse_number, _parse_silver_millions
 from translator import translate_to_en, translate_champion_list
@@ -37,158 +36,218 @@ HEADERS = {
     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
 }
 
-# ── Optional OCR ─────────────────────────────────────────────────────────────
+# ── Optional OCR ──────────────────────────────────────────────────────────────
 try:
     import pytesseract
     from PIL import Image
-
     _OCR = True
-    logger.info("pytesseract available — image OCR enabled for raid-cheap.com")
 except ImportError:
     _OCR = False
-    logger.info("pytesseract/Pillow not installed — image OCR disabled")
 
 
 # ---------------------------------------------------------------------------
-# OCR helper
+# Playwright scraper class
 # ---------------------------------------------------------------------------
 
-async def _ocr_image_url(url: str, client: httpx.AsyncClient) -> str:
-    """Download an image and extract text via OCR. Returns '' on failure."""
-    if not _OCR:
-        return ""
-    try:
-        resp = await client.get(url, timeout=20)
-        img = Image.open(io.BytesIO(resp.content)).convert("RGB")
+class RaidCheapScraper:
+    """Manages a Playwright browser session for raid-cheap.com."""
 
-        # Try English first (faster, handles global-server RSL screenshots)
-        text_en = pytesseract.image_to_string(img, lang="eng")
-        if len(text_en.strip()) > 30:
-            return text_en
+    def __init__(self) -> None:
+        self._pw = None
+        self._browser: Optional[Browser] = None
+        self._ctx: Optional[BrowserContext] = None
 
-        # Fall back to Chinese+English OCR (Chinese-server screenshots)
-        try:
-            text_cn = pytesseract.image_to_string(img, lang="chi_sim+eng")
-            return translate_to_en(text_cn) if text_cn.strip() else ""
-        except Exception:
-            return text_en  # return whatever we got
-    except Exception as exc:
-        logger.debug(f"OCR failed for {url}: {exc}")
-        return ""
+    async def __aenter__(self) -> "RaidCheapScraper":
+        self._pw = await async_playwright().start()
+        self._browser = await self._pw.chromium.launch(headless=True)
+        self._ctx = await self._browser.new_context(
+            user_agent=HEADERS["User-Agent"],
+            viewport={"width": 1440, "height": 900},
+            locale="zh-CN",
+        )
+        return self
 
+    async def __aexit__(self, *_) -> None:
+        if self._ctx:
+            await self._ctx.close()
+        if self._browser:
+            await self._browser.close()
+        if self._pw:
+            await self._pw.stop()
 
-# ---------------------------------------------------------------------------
-# Resource extraction from translated text
-# ---------------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Step 1 — Select all champions and run Search
+    # ------------------------------------------------------------------
 
-def _extract_resources(text: str) -> dict:
-    """
-    Parse resource values from a block of translated English text.
-    Returns a dict of recognised fields.
-    """
+    async def _select_all_champions_and_search(self, page: Page) -> bool:
+        """
+        Click every champion portrait card, then click Search.
+        Returns True if at least one account result appeared.
+        """
+        await page.goto(BASE_URL, wait_until="networkidle", timeout=40_000)
 
-    def _int(pattern: str) -> Optional[int]:
-        m = re.search(pattern, text, re.I)
-        if not m:
-            return None
-        v = _parse_number(m.group(1))
-        return int(v) if v is not None else None
-
-    def _float(pattern: str) -> Optional[float]:
-        m = re.search(pattern, text, re.I)
-        return _parse_number(m.group(1)) if m else None
-
-    silver_raw = re.search(r"[Ss]ilver[:\s]+([0-9.,]+\s*[MmKk]?)", text)
-    silver = _parse_silver_millions(silver_raw.group(1)) if silver_raw else None
-
-    gems = _int(r"[Gg]ems?[:\s]+([0-9,]+)")
-    energy = _float(r"[Ee]nergy[:\s]+([0-9.,]+\s*[MmKk]?)")
-    cb_keys = _int(r"CB\s*[Kk]eys?[:\s]+([0-9]+)")
-    brews = _int(r"[Bb]rews?[:\s]+([0-9]+)")
-    age = _int(r"(\d+)\s+days?\s+old|[Aa]ge[:\s]+(\d+)")
-    total_heroes = _int(r"[Tt]otal\s+[Hh]eroes?[:\s]+(\d+)|[Hh]eroes?[:\s]+(\d+)")
-
-    # Tomes
-    tomes: dict[str, int] = {}
-    for rarity in ("Rare", "Epic", "Legendary"):
-        m = re.search(rf"(\d+)\s+{rarity}\s+[Tt]ome", text, re.I)
-        if m:
-            tomes[rarity] = int(m.group(1))
-    if not tomes:
-        m = re.search(r"[Tt]omes?[:\s]+([\d\w /]+)", text)
-        if m:
-            for part in m.group(1).split("/"):
-                nm = re.match(r"(\d+)\s+(\w+)", part.strip())
-                if nm:
-                    tomes[nm.group(2).capitalize()] = int(nm.group(1))
-
-    # Shards
-    shards: dict[str, int] = {}
-    for stype in ("Ancient", "Void", "Sacred", "Epic", "Legendary"):
-        m = re.search(rf"(\d+)\s+{stype}\s+[Ss]hard", text, re.I)
-        if m:
-            shards[stype] = int(m.group(1))
-
-    # Chickens: "6★ ×6" or "6* x24"
-    chickens: dict[str, int] = {}
-    for cm in re.finditer(r"([2-6])[★*]\s*[×xX](\d+)", text):
-        chickens[f"{cm.group(1)}★"] = int(cm.group(2))
-
-    return dict(
-        silver=silver,
-        gems=gems,
-        energy=energy,
-        cb_keys=cb_keys,
-        brews=brews,
-        account_age_days=age,
-        total_heroes=total_heroes,
-        tomes=tomes,
-        shards=shards,
-        chickens=chickens,
-    )
-
-
-def _extract_champions(text: str) -> tuple[list[str], list[str]]:
-    """
-    Try to pull mythic and legendary champion lists from translated text.
-    Returns (mythics, legendaries).
-    """
-    mythics: list[str] = []
-    legendaries: list[str] = []
-
-    myth_m = re.search(r"Mythic[^:]*:([^\n\r]{5,200})", text, re.I)
-    if myth_m:
-        mythics = [c.strip() for c in re.split(r"[,，•·\n]", myth_m.group(1)) if c.strip()]
-
-    leg_m = re.search(r"Legendary[^:]*:([^\n\r]{5,500})", text, re.I)
-    if leg_m:
-        legendaries = [
-            c.strip()
-            for c in re.split(r"[,，•·\n]", leg_m.group(1))
-            if c.strip() and c.strip() not in mythics
+        # The champion selection grid — try several selectors that match
+        # what's visible in the screenshot (portrait image cards in a grid).
+        card_selectors = [
+            "td img",           # table-based grid
+            ".champion-card",
+            "[class*='champion'] img",
+            "[class*='card'] img",
+            ".hero img",
+            "figure img",
+            "ul li img",
+            "div img[src*='champion']",
+            "div img[src*='hero']",
         ]
 
-    return mythics, legendaries
+        clicked = 0
+        for sel in card_selectors:
+            cards = await page.locator(sel).all()
+            if not cards:
+                continue
+            logger.info(f"Clicking {len(cards)} champion cards via selector '{sel}'")
+            for card in cards:
+                try:
+                    await card.click(timeout=2_000)
+                    clicked += 1
+                except Exception:
+                    # Some cards may be off-screen; scroll into view first
+                    try:
+                        await card.scroll_into_view_if_needed()
+                        await card.click(timeout=2_000)
+                        clicked += 1
+                    except Exception:
+                        pass
+            if clicked > 0:
+                break
+
+        if clicked == 0:
+            logger.warning(
+                "Could not click any champion cards on raid-cheap.com. "
+                "Saving debug screenshot to raidcheap_debug.png"
+            )
+            await page.screenshot(path="raidcheap_debug.png")
+            return False
+
+        logger.info(f"Selected {clicked} champion cards")
+
+        # Click the Search button (labelled "Search" in English per screenshot)
+        search_selectors = [
+            "button:has-text('Search')",
+            "input[value='Search']",
+            "button:has-text('搜索')",
+            "#search-btn",
+            ".search-btn",
+            "button[type='submit']",
+        ]
+        for sel in search_selectors:
+            try:
+                btn = page.locator(sel).first
+                if await btn.count() > 0:
+                    await btn.click()
+                    break
+            except Exception:
+                continue
+
+        await page.wait_for_load_state("networkidle", timeout=30_000)
+
+        # Save a debug screenshot so you can verify results
+        await page.screenshot(path="raidcheap_after_search.png")
+        logger.info("Search done — screenshot saved to raidcheap_after_search.png")
+        return True
+
+    # ------------------------------------------------------------------
+    # Step 2 — Parse search results page
+    # ------------------------------------------------------------------
+
+    async def _parse_results_page(self, page: Page) -> list[tuple[str, str, float]]:
+        """
+        Extract (account_id, detail_url, price_usd) from the search results.
+        Handles pagination if a 'Next page' link exists.
+        """
+        results: dict[str, tuple[str, float]] = {}
+
+        while True:
+            content = await page.content()
+            soup = BeautifulSoup(content, "lxml")
+
+            # --- Find account listing links ---
+            for a in soup.find_all("a", href=True):
+                href: str = a["href"]
+                m = re.search(
+                    r"/(?:account|item|product|listing|detail|buy|order)/([A-Za-z0-9_-]{3,})",
+                    href,
+                )
+                if not m:
+                    # Try just /ID at end of path
+                    m = re.search(r"/([A-Za-z0-9_-]{6,})/?$", href)
+                if m:
+                    raw_id = m.group(1)
+                    if raw_id in ("search", "index", "page", "list"):
+                        continue
+                    if raw_id not in results:
+                        full_url = href if href.startswith("http") else BASE_URL + href
+                        price = _extract_price_from_tag(a)
+                        results[raw_id] = (full_url, price)
+
+            # --- Also look for [data-id] cards ---
+            for card in soup.find_all(attrs={"data-id": True}):
+                raw_id = card["data-id"].strip()
+                if re.match(r"[A-Za-z0-9_-]{3,}", raw_id) and raw_id not in results:
+                    price = _extract_price_from_tag(card)
+                    url = f"{BASE_URL}/account/{raw_id}"
+                    results[raw_id] = (url, price)
+
+            # --- Pagination: follow "Next" link if present ---
+            next_link = soup.find("a", string=re.compile(r"Next|下一页|›|»", re.I))
+            if not next_link or not next_link.get("href"):
+                break
+            next_url = next_link["href"]
+            if not next_url.startswith("http"):
+                next_url = BASE_URL + next_url
+            logger.info(f"Following pagination → {next_url}")
+            await page.goto(next_url, wait_until="networkidle", timeout=20_000)
+
+        if not results:
+            logger.warning(
+                "No account listings found in search results. "
+                "Check raidcheap_after_search.png to see what the page looks like."
+            )
+
+        logger.info(f"raid-cheap.com search: {len(results)} accounts found")
+        return [("rc_" + rid, url, price) for rid, (url, price) in results.items()]
+
+    # ------------------------------------------------------------------
+    # Public: fetch the listing
+    # ------------------------------------------------------------------
+
+    async def fetch_listing(self) -> list[tuple[str, str, float]]:
+        """Open raid-cheap.com, select all champs, search, return (id, url, price)."""
+        page = await self._ctx.new_page()
+        try:
+            ok = await self._select_all_champions_and_search(page)
+            if not ok:
+                return []
+            return await self._parse_results_page(page)
+        finally:
+            await page.close()
 
 
 # ---------------------------------------------------------------------------
-# Price extraction
+# Helpers
 # ---------------------------------------------------------------------------
 
-def _extract_price(element) -> float:
-    """Look for a USD price in an element and its ancestors."""
-    from bs4 import Tag
-    candidates = [element]
-    p = element.parent if hasattr(element, "parent") else None
+def _extract_price_from_tag(tag) -> float:
+    """Walk up the DOM to find a USD price near this tag."""
+    candidates = [tag]
+    p = getattr(tag, "parent", None)
     for _ in range(5):
         if p:
             candidates.append(p)
             p = getattr(p, "parent", None)
 
-    for tag in candidates:
-        if tag is None:
-            continue
-        text = tag.get_text() if hasattr(tag, "get_text") else str(tag)
+    for t in candidates:
+        text = t.get_text() if hasattr(t, "get_text") else str(t)
         m = re.search(
             r"(?:USD|US\$|\$)\s*([0-9]+(?:\.[0-9]{1,2})?)"
             r"|([0-9]+(?:\.[0-9]{1,2})?)\s*(?:USD|US\$|\$)",
@@ -199,157 +258,150 @@ def _extract_price(element) -> float:
                 return float(m.group(1) or m.group(2))
             except ValueError:
                 pass
-
-    # Fallback: look for any price-like number
-    m = re.search(r"([0-9]+(?:\.[0-9]{1,2})?)\s*(?:元|円|¥|₽|RMB)", str(candidates[0]))
-    if m:
-        try:
-            # Rough CNY→USD conversion (update rate as needed)
-            cny = float(m.group(1))
-            return round(cny / 7.2, 2)
-        except ValueError:
-            pass
+        # CNY fallback (rough /7.2 conversion)
+        m2 = re.search(r"([0-9]+(?:\.[0-9]{1,2})?)\s*(?:元|¥|CNY|RMB)", text)
+        if m2:
+            try:
+                return round(float(m2.group(1)) / 7.2, 2)
+            except ValueError:
+                pass
     return 0.0
 
 
-# ---------------------------------------------------------------------------
-# Listing-page scraper
-# ---------------------------------------------------------------------------
-
-async def fetch_raidcheap_list() -> list[tuple[str, str, float]]:
-    """
-    Return (account_id, detail_url, price_usd) for all accounts on raid-cheap.com.
-
-    NOTE: Selectors are best-effort without live HTML access.
-    Run with --parse-only --debug to see raw HTML if nothing is found.
-    """
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True, headers=HEADERS) as client:
-        resp = await client.get(BASE_URL)
-        resp.raise_for_status()
-        html = resp.text
-
-    soup = BeautifulSoup(html, "lxml")
-    results: dict[str, tuple[str, float]] = {}
-
-    # Strategy 1: <a> links matching typical account detail URL patterns
-    for a in soup.find_all("a", href=True):
-        href: str = a["href"]
-        # Common patterns: /account/ID, /item/ID, /product/ID, /listing/ID
-        m = re.search(r"/(?:account|item|product|listing|detail)/([A-Za-z0-9_-]{3,})", href)
+def _extract_resources(text: str) -> dict:
+    def _int(pattern: str):
+        m = re.search(pattern, text, re.I)
         if not m:
-            # Or just /ID at the end
-            m = re.search(r"/([A-Za-z0-9_-]{6,})$", href)
+            return None
+        v = _parse_number(m.group(1))
+        return int(v) if v is not None else None
+
+    def _float(pattern: str):
+        m = re.search(pattern, text, re.I)
+        return _parse_number(m.group(1)) if m else None
+
+    silver_m = re.search(r"[Ss]ilver[:\s]+([0-9.,]+\s*[MmKk]?)", text)
+    silver = _parse_silver_millions(silver_m.group(1)) if silver_m else None
+    gems = _int(r"[Gg]ems?[:\s]+([0-9,]+)")
+    energy = _float(r"[Ee]nergy[:\s]+([0-9.,]+\s*[MmKk]?)")
+    cb_keys = _int(r"CB\s*[Kk]eys?[:\s]+([0-9]+)")
+    brews = _int(r"[Bb]rews?[:\s]+([0-9]+)")
+
+    age_m = re.search(r"(\d+)\s+days?\s+old|[Aa]ge[:\s]+(\d+)", text)
+    age = int(age_m.group(1) or age_m.group(2)) if age_m else None
+
+    heroes_m = re.search(r"[Tt]otal\s+[Hh]eroes?[:\s]+(\d+)|[Hh]eroes?[:\s]+(\d+)", text)
+    heroes = int(heroes_m.group(1) or heroes_m.group(2)) if heroes_m else None
+
+    tomes: dict[str, int] = {}
+    for rarity in ("Rare", "Epic", "Legendary"):
+        m = re.search(rf"(\d+)\s+{rarity}\s+[Tt]ome", text, re.I)
         if m:
-            aid = m.group(1)
-            if aid in results:
-                continue
-            full_url = href if href.startswith("http") else BASE_URL + href
-            price = _extract_price(a)
-            results[aid] = (full_url, price)
+            tomes[rarity] = int(m.group(1))
 
-    # Strategy 2: [data-id] or [data-product-id] attributes
-    if not results:
-        for card in soup.find_all(attrs={"data-id": True}):
-            aid = card.get("data-id", "").strip()
-            if re.match(r"[A-Za-z0-9_-]{3,}", aid):
-                price = _extract_price(card)
-                url = f"{BASE_URL}/account/{aid}"
-                results[aid] = (url, price)
+    shards: dict[str, int] = {}
+    for stype in ("Ancient", "Void", "Sacred", "Epic", "Legendary"):
+        m = re.search(rf"(\d+)\s+{stype}\s+[Ss]hard", text, re.I)
+        if m:
+            shards[stype] = int(m.group(1))
 
-    if not results:
-        logger.warning(
-            "raid-cheap.com: no listings found. HTML may have changed.\n"
-            f"First 2000 chars:\n{html[:2000]}"
-        )
-    else:
-        logger.info(f"raid-cheap.com: {len(results)} accounts found")
+    chickens: dict[str, int] = {}
+    for cm in re.finditer(r"([2-6])[★*]\s*[×xX](\d+)", text):
+        chickens[f"{cm.group(1)}★"] = int(cm.group(2))
 
-    return [("rc_" + aid, url, price) for aid, (url, price) in results.items()]
+    return dict(
+        silver=silver, gems=gems, energy=energy, cb_keys=cb_keys,
+        brews=brews, account_age_days=age, total_heroes=heroes,
+        tomes=tomes, shards=shards, chickens=chickens,
+    )
 
 
-# ---------------------------------------------------------------------------
-# Detail page parser
-# ---------------------------------------------------------------------------
-
-async def fetch_raidcheap_account(account_id: str, detail_url: str, price_usd: float) -> Optional[AccountData]:
-    """Fetch and parse one raid-cheap.com account detail page."""
+async def _ocr_image(url: str, client: httpx.AsyncClient) -> str:
+    if not _OCR:
+        return ""
     try:
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True, headers=HEADERS) as client:
+        resp = await client.get(url, timeout=20)
+        img = Image.open(io.BytesIO(resp.content)).convert("RGB")
+        text_en = pytesseract.image_to_string(img, lang="eng")
+        if len(text_en.strip()) > 30:
+            return text_en
+        text_cn = pytesseract.image_to_string(img, lang="chi_sim+eng")
+        return translate_to_en(text_cn) if text_cn.strip() else text_en
+    except Exception as exc:
+        logger.debug(f"OCR failed {url}: {exc}")
+        return ""
+
+
+# ---------------------------------------------------------------------------
+# Detail page fetch (uses plain httpx — detail pages are static HTML)
+# ---------------------------------------------------------------------------
+
+async def fetch_raidcheap_account(
+    account_id: str, detail_url: str, price_usd: float
+) -> Optional[AccountData]:
+    """Fetch and parse one account detail page from raid-cheap.com."""
+    try:
+        async with httpx.AsyncClient(
+            timeout=30, follow_redirects=True, headers=HEADERS
+        ) as client:
             resp = await client.get(detail_url)
             resp.raise_for_status()
             html = resp.text
 
             soup = BeautifulSoup(html, "lxml")
-
-            # 1. Translate all page text ────────────────────────────────────
             raw_text = soup.get_text(separator="\n")
             translated = translate_to_en(raw_text)
-            combined = translated  # start with translated HTML text
+            combined = translated
 
-            # 2. OCR all account images ─────────────────────────────────────
+            # OCR account screenshots
             img_tags = soup.find_all("img", src=True)
-            image_texts: list[str] = []
+            ocr_parts: list[str] = []
             for img in img_tags:
                 src: str = img["src"]
-                if any(skip in src for skip in ("logo", "icon", "avatar", "banner")):
-                    continue  # skip UI images, only want account screenshots
+                if any(s in src.lower() for s in ("logo", "icon", "avatar", "banner", "btn")):
+                    continue
                 full_src = src if src.startswith("http") else BASE_URL + src
-                ocr_text = await _ocr_image_url(full_src, client)
+                ocr_text = await _ocr_image(full_src, client)
                 if ocr_text.strip():
-                    image_texts.append(ocr_text)
-                    logger.debug(f"OCR {full_src[:80]}: {ocr_text[:120]}")
+                    ocr_parts.append(ocr_text)
+            if ocr_parts:
+                combined += "\n\n" + "\n\n".join(ocr_parts)
 
-            if image_texts:
-                combined = combined + "\n\n" + "\n\n".join(image_texts)
-
-        # 3. Extract champion names ─────────────────────────────────────────
-        # First try from page structure (dedicated sections)
+        # Champion lists — try regex on translated text
         mythics: list[str] = []
         legendaries: list[str] = []
 
-        soup2 = BeautifulSoup(html, "lxml")
-        for tag in soup2.find_all(["li", "span", "div"]):
-            cls = " ".join(tag.get("class", []))
-            if "mythic" in cls.lower() or "神话" in tag.get_text():
-                names = [t.get_text(strip=True) for t in tag.find_all(["span", "p", "li"])]
-                mythics.extend(translate_champion_list([n for n in names if n]))
+        myth_m = re.search(r"Mythic[^:]*:([^\n]{5,200})", combined, re.I)
+        if myth_m:
+            mythics = [c.strip() for c in re.split(r"[,，•·]", myth_m.group(1)) if c.strip()]
 
-        # Fallback to regex on combined translated text
-        if not mythics and not legendaries:
-            mythics, legendaries = _extract_champions(combined)
+        leg_m = re.search(r"Legendary[^:]*:([^\n]{5,500})", combined, re.I)
+        if leg_m:
+            legendaries = [
+                c.strip()
+                for c in re.split(r"[,，•·]", leg_m.group(1))
+                if c.strip() and c.strip() not in mythics
+            ]
 
-        # 4. Extract resources ─────────────────────────────────────────────
         res = _extract_resources(combined)
 
-        acc = AccountData(
+        return AccountData(
             account_id=account_id,
             price_usd=price_usd,
             mythic_champions=mythics,
             legendary_champions=legendaries,
             **res,
         )
-        return acc
 
     except Exception as exc:
-        logger.error(f"raid-cheap.com: failed to fetch {account_id}: {exc}")
+        logger.error(f"raid-cheap.com detail fetch failed for {account_id}: {exc}")
         return None
 
 
 # ---------------------------------------------------------------------------
-# Public API (mirrors parser.py interface)
+# Public API used by main.py
 # ---------------------------------------------------------------------------
 
-async def fetch_raidcheap_accounts(only_new_ids: set[str] | None = None) -> list[AccountData]:
-    """Fetch all accounts from raid-cheap.com with full details."""
-    id_list = await fetch_raidcheap_list()
-    accounts: list[AccountData] = []
-
-    for account_id, detail_url, price in id_list:
-        if only_new_ids is not None and account_id not in only_new_ids:
-            accounts.append(AccountData(account_id=account_id, price_usd=price))
-            continue
-        acc = await fetch_raidcheap_account(account_id, detail_url, price)
-        if acc:
-            accounts.append(acc)
-
-    return accounts
+async def fetch_raidcheap_list(scraper: "RaidCheapScraper") -> list[tuple[str, str, float]]:
+    """Fetch (account_id, url, price) list using an existing RaidCheapScraper."""
+    return await scraper.fetch_listing()

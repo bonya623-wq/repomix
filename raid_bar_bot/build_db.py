@@ -1,8 +1,10 @@
 """
 One-time setup script — build the RSL champion portrait database.
 
-Downloads every champion portrait from raidcodex.com (English names),
-computes a perceptual hash (pHash) for each, and saves:
+Source: ayumilove.net (accessible worldwide, English names, in-game portraits)
+
+Downloads every champion portrait, computes a perceptual hash (pHash) for each,
+and saves:
 
     champions_db.json   { "hash_string": "Valkyrie", ... }
 
@@ -15,7 +17,6 @@ image — no translation needed, works 100% correctly.
 Requires:  pip install imagehash Pillow httpx beautifulsoup4 lxml
 """
 
-import argparse
 import asyncio
 import io
 import json
@@ -31,7 +32,6 @@ from PIL import Image
 
 DB_FILE = Path("champions_db.json")
 LOG_FILE = Path("build_db.log")
-CONFIG_FILE = Path("config.json")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -47,86 +47,93 @@ HEADERS = {
     )
 }
 
-# Primary source — raidcodex.com lists all RSL champions with English names
-CODEX_ROOT = "https://raidcodex.com"
-CODEX_LIST = "https://raidcodex.com/champions/"
+ROOT = "https://ayumilove.net"
+LIST_URL = "https://ayumilove.net/raid-shadow-legends-champion-tier-list/"
 
 
 # ---------------------------------------------------------------------------
-# Fetch champion list
+# Fetch champion list from ayumilove.net
 # ---------------------------------------------------------------------------
 
 async def fetch_champion_list(client: httpx.AsyncClient) -> list[tuple[str, str]]:
     """
     Return [(english_name, portrait_url), ...] for every RSL champion.
-    Tries multiple selectors because the site layout can change.
+
+    ayumilove.net structure: champion cards inside the tier table,
+    each card is an <a> link to the champion guide page, with an <img>
+    whose alt= is the English champion name.
     """
-    logger.info(f"Fetching champion list from {CODEX_LIST} ...")
-    resp = await client.get(CODEX_LIST, timeout=40)
+    logger.info(f"Fetching champion list from {LIST_URL} ...")
+    resp = await client.get(LIST_URL, timeout=60)
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "lxml")
-    champions: list[tuple[str, str]] = []
 
-    # --- Strategy 1: cards with explicit name element + image ---
-    for card in soup.select(
-        ".champion-card, .champion-item, [class*='champion'], "
-        "[class*='hero-card'], [class*='champ']"
-    ):
-        img = card.find("img")
-        name_tag = card.find(
-            ["h2", "h3", "h4", "span", "p", "div"],
-            class_=re.compile(r"name|title|label", re.I),
+    champions: dict[str, str] = {}  # name → portrait_url
+
+    # Strategy 1 — links to individual champion guide pages
+    # href pattern: /raid-shadow-legends-NAME-skill-mastery-equip-guide/
+    for a in soup.find_all("a", href=re.compile(r"raid-shadow-legends-.+-skill", re.I)):
+        img = a.find("img")
+        if not img:
+            continue
+
+        # Name from alt attribute
+        name = (img.get("alt") or "").strip()
+
+        # Fallback: derive name from href slug
+        if not name:
+            slug = a["href"].strip("/").split("/")[-1]
+            # strip suffix -skill-mastery-equip-guide
+            slug = re.sub(r"-skill.*$", "", slug)
+            name = slug.replace("-", " ").title()
+
+        src = (
+            img.get("src")
+            or img.get("data-src")
+            or img.get("data-lazy-src")
+            or img.get("data-original", "")
         )
-        if not name_tag:
-            name_tag = card.find(["h2", "h3", "h4"])
-        if img and name_tag:
-            name = name_tag.get_text(strip=True)
-            src = img.get("src") or img.get("data-src") or img.get("data-lazy-src", "")
-            if name and src and len(name) > 2:
-                if not src.startswith("http"):
-                    src = CODEX_ROOT + src
-                champions.append((name, src))
+        if name and src and len(name) > 2 and name not in champions:
+            if not src.startswith("http"):
+                src = ROOT + src
+            champions[name] = src
 
-    # --- Strategy 2: <img alt="Champion Name"> inside <a href="/champions/..."> ---
+    # Strategy 2 — any <img> whose alt looks like a champion name + src has "champion" in path
     if not champions:
-        for a in soup.find_all("a", href=re.compile(r"/champions/[^/]+/?$")):
-            img = a.find("img")
-            if not img:
+        logger.info("Strategy 1 found nothing — trying strategy 2 (img[alt] with champion path)")
+        for img in soup.find_all("img", alt=True):
+            alt = img["alt"].strip()
+            src = (
+                img.get("src")
+                or img.get("data-src")
+                or img.get("data-lazy-src", "")
+            )
+            if not src:
                 continue
-            # Name from alt text or href slug
-            name = (img.get("alt") or "").strip()
-            if not name:
-                slug = a["href"].rstrip("/").split("/")[-1]
-                name = slug.replace("-", " ").title()
-            src = img.get("src") or img.get("data-src", "")
-            if name and src and len(name) > 2:
-                if not src.startswith("http"):
-                    src = CODEX_ROOT + src
-                champions.append((name, src))
+            if not src.startswith("http"):
+                src = ROOT + src
+            if (
+                3 <= len(alt) <= 45
+                and re.search(r"[A-Z]", alt)          # at least one capital → name
+                and "champion" in src.lower()
+                and alt not in champions
+            ):
+                champions[alt] = src
 
-    # --- Strategy 3: any <img alt> that looks like a champion name ---
+    # Strategy 3 — broadest fallback: any <img alt> 3–45 chars with a plausible portrait URL
     if not champions:
-        seen = set()
+        logger.info("Strategy 2 found nothing — trying strategy 3 (broad img scan)")
         for img in soup.find_all("img", alt=True):
             alt = img["alt"].strip()
             src = img.get("src") or img.get("data-src", "")
-            # Filter out nav/logo images — champion names are 3-40 chars
-            if 3 <= len(alt) <= 40 and src and alt not in seen:
+            if src and 3 <= len(alt) <= 45 and re.search(r"[A-Z]", alt):
                 if not src.startswith("http"):
-                    src = CODEX_ROOT + src
-                seen.add(alt)
-                champions.append((alt, src))
+                    src = ROOT + src
+                champions.setdefault(alt, src)
 
-    # De-duplicate by name
-    seen_names: set[str] = set()
-    unique: list[tuple[str, str]] = []
-    for name, src in champions:
-        if name not in seen_names:
-            seen_names.add(name)
-            unique.append((name, src))
-
-    logger.info(f"Found {len(unique)} champions on listing page")
-    return unique
+    result = list(champions.items())
+    logger.info(f"Found {len(result)} champions")
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +144,7 @@ async def hash_portrait(client: httpx.AsyncClient, url: str) -> str | None:
     """Download portrait and return its pHash string, or None on failure."""
     try:
         resp = await client.get(url, timeout=20)
+        resp.raise_for_status()
         img = Image.open(io.BytesIO(resp.content)).convert("RGB")
         return str(imagehash.phash(img))
     except Exception as exc:
@@ -148,43 +156,20 @@ async def hash_portrait(client: httpx.AsyncClient, url: str) -> str | None:
 # Main
 # ---------------------------------------------------------------------------
 
-def _load_proxy(proxy_arg: str) -> str | None:
-    """Return proxy URL string from --proxy arg or config.json, or None."""
-    if proxy_arg:
-        return proxy_arg
-    if CONFIG_FILE.exists():
-        cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        p = cfg.get("proxy", {})
-        server = p.get("server", "")
-        if server:
-            user = p.get("username", "")
-            pw   = p.get("password", "")
-            if user and pw:
-                proto, rest = server.split("://", 1)
-                return f"{proto}://{user}:{pw}@{rest}"
-            return server
-    return None
-
-
-async def build(proxy_arg: str = "") -> None:
+async def build() -> None:
     existing: dict[str, str] = {}
     if DB_FILE.exists():
         with open(DB_FILE, encoding="utf-8") as f:
             existing = json.load(f)
         logger.info(f"Existing DB: {len(existing)} entries — will add new ones only")
 
-    proxies = _load_proxy(proxy_arg)
-    if proxies:
-        logger.info(f"Using proxy: {list(proxies.values())[0]}")
-
-    async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True, proxy=proxies) as client:
+    async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True) as client:
         champions = await fetch_champion_list(client)
 
         if not champions:
             logger.error(
-                "No champions found. The raidcodex.com page structure may have changed.\n"
-                "Check build_db.log and try again, or open raidcodex.com/champions/ manually\n"
-                "to find the correct CSS selector and update fetch_champion_list()."
+                "No champions found on ayumilove.net.\n"
+                "The page structure may have changed — check build_db.log."
             )
             return
 
@@ -193,31 +178,23 @@ async def build(proxy_arg: str = "") -> None:
 
         for i, (name, portrait_url) in enumerate(champions, 1):
             if name in already_named:
-                logger.info(f"[{i:>3}/{len(champions)}] SKIP (already in DB): {name}")
+                logger.info(f"[{i:>3}/{len(champions)}] SKIP  {name}")
                 continue
 
             h = await hash_portrait(client, portrait_url)
             if h:
                 db[h] = name
-                logger.info(f"[{i:>3}/{len(champions)}] OK  {name}")
+                logger.info(f"[{i:>3}/{len(champions)}] OK    {name}")
             else:
                 logger.warning(f"[{i:>3}/{len(champions)}] FAIL  {name}  {portrait_url}")
 
-            await asyncio.sleep(0.3)  # be polite to the server
+            await asyncio.sleep(0.2)
 
     with open(DB_FILE, "w", encoding="utf-8") as f:
         json.dump(db, f, indent=2, ensure_ascii=False)
 
-    logger.info(f"\nDone! Database: {len(db)} champions saved to {DB_FILE}")
+    logger.info(f"\nDone! {len(db)} champions saved to {DB_FILE}")
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description="Build RSL champion portrait DB")
-    ap.add_argument(
-        "--proxy",
-        default="",
-        metavar="URL",
-        help="Proxy URL, e.g. http://user:pass@host:port  (overrides config.json)",
-    )
-    args = ap.parse_args()
-    asyncio.run(build(args.proxy))
+    asyncio.run(build())

@@ -148,10 +148,10 @@ async def hash_portrait(client: httpx.AsyncClient, url: str) -> str | None:
 # Main
 # ---------------------------------------------------------------------------
 
-def _load_proxy(proxy_arg: str) -> dict | None:
-    """Return httpx proxy dict from --proxy arg or config.json, or None."""
+def _load_proxy(proxy_arg: str) -> str | None:
+    """Return proxy URL string from --proxy arg or config.json, or None."""
     if proxy_arg:
-        return {"http://": proxy_arg, "https://": proxy_arg}
+        return proxy_arg
     if CONFIG_FILE.exists():
         cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
         p = cfg.get("proxy", {})
@@ -160,12 +160,9 @@ def _load_proxy(proxy_arg: str) -> dict | None:
             user = p.get("username", "")
             pw   = p.get("password", "")
             if user and pw:
-                # inject credentials into URL: http://user:pass@host:port
                 proto, rest = server.split("://", 1)
-                url = f"{proto}://{user}:{pw}@{rest}"
-            else:
-                url = server
-            return {"http://": url, "https://": url}
+                return f"{proto}://{user}:{pw}@{rest}"
+            return server
     return None
 
 
@@ -180,7 +177,7 @@ async def build(proxy_arg: str = "") -> None:
     if proxies:
         logger.info(f"Using proxy: {list(proxies.values())[0]}")
 
-    async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True, proxies=proxies) as client:
+    async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True, proxy=proxies) as client:
         champions = await fetch_champion_list(client)
 
         if not champions:

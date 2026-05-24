@@ -343,12 +343,23 @@ async def main() -> None:
         profile_dir = config.get("browser_profile_dir", "./browser_profile")
         headless = config.get("headless", False)
 
+        proxy_cfg = config.get("proxy")
+        proxy_kwargs = {}
+        if proxy_cfg and proxy_cfg.get("server"):
+            proxy_kwargs["proxy"] = {
+                "server":   proxy_cfg["server"],
+                "username": proxy_cfg.get("username", ""),
+                "password": proxy_cfg.get("password", ""),
+            }
+            logger.info(f"G2G: using proxy {proxy_cfg['server']}")
+
         async with async_playwright() as pw:
             context = await pw.chromium.launch_persistent_context(
                 user_data_dir=profile_dir,
                 headless=headless,
                 args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
                 viewport={"width": 1280, "height": 900},
+                **proxy_kwargs,
             )
 
             g2g = G2GBot(context)

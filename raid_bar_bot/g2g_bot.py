@@ -460,8 +460,13 @@ class G2GBot:
 
     async def is_logged_in(self) -> bool:
         page = await self._get_page()
-        token = await page.evaluate("() => localStorage.getItem('accessToken')")
-        return token is not None
+        try:
+            if not page.url or page.url in ("about:blank", ""):
+                await page.goto(BASE, wait_until="domcontentloaded", timeout=20000)
+            token = await page.evaluate("() => localStorage.getItem('accessToken')")
+            return token is not None
+        except Exception:
+            return False
 
     async def wait_for_manual_login(self):
         page = await self._get_page()

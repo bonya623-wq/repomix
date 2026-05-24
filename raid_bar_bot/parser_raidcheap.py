@@ -80,26 +80,6 @@ class RaidCheapScraper:
     # Find mythic cards
     # ------------------------------------------------------------------
 
-    # JS helper shared by _find and _click
-    _MYTHIC_JS = """
-        const isMythicCard = (el) => {
-            // Cards are <div class="imgcont" style="background-color:#RRGGBB">
-            // Mythic color: #FF3300 (orange-red).  We detect by checking that
-            // the inline background-color hex has R > 150, R > G*2, R > B*2.
-            const m = (el.getAttribute('style') || '').match(
-                /background-color:#([0-9a-fA-F]{6})/i
-            );
-            if (!m) return false;
-            const h = m[1];
-            const r = parseInt(h.slice(0,2), 16);
-            const g = parseInt(h.slice(2,4), 16);
-            const b = parseInt(h.slice(4,6), 16);
-            return r > 150 && r > g * 2 && r > b * 2;
-        };
-        const mythicCards = () =>
-            Array.from(document.querySelectorAll('div.imgcont')).filter(isMythicCard);
-    """
-
     async def _find_mythic_cards(self, page: Page) -> list:
         """
         Return [{idx: N}] for every mythic champion card in the filter grid.
@@ -122,9 +102,20 @@ class RaidCheapScraper:
             pass
         await asyncio.sleep(1.5)
 
-        count: int = await page.evaluate(
-            self._MYTHIC_JS + "mythicCards().length;"
-        )
+        count: int = await page.evaluate("""() => {
+            const isRed = (el) => {
+                const m = (el.getAttribute('style') || '').match(
+                    /background-color:#([0-9a-fA-F]{6})/i
+                );
+                if (!m) return false;
+                const h = m[1];
+                const r = parseInt(h.slice(0,2), 16);
+                const g = parseInt(h.slice(2,4), 16);
+                const b = parseInt(h.slice(4,6), 16);
+                return r > 150 && r > g * 2 && r > b * 2;
+            };
+            return Array.from(document.querySelectorAll('div.imgcont')).filter(isRed).length;
+        }""")
 
         if count > 0:
             logger.info(f"Found {count} mythic champion cards (background-color #FF3300)")
@@ -132,7 +123,7 @@ class RaidCheapScraper:
 
         # Nothing found — save debug artefacts
         total_imgcont: int = await page.evaluate(
-            "document.querySelectorAll('div.imgcont').length"
+            "() => document.querySelectorAll('div.imgcont').length"
         )
         await page.screenshot(path="raidcheap_mythic_not_found.png", full_page=True)
         html = await page.content()
@@ -236,16 +227,25 @@ class RaidCheapScraper:
         self, page: Page, card: dict, index: int, total: int
     ) -> dict[str, tuple[str, float]]:
         """JS-scroll-and-click the Nth mythic card, search, collect, clear."""
-        clicked: bool = await page.evaluate(
-            self._MYTHIC_JS + f"""
-            const cards = mythicCards();
-            const el = cards[{card['idx']}];
+        clicked: bool = await page.evaluate("""(idx) => {
+            const isRed = (el) => {
+                const m = (el.getAttribute('style') || '').match(
+                    /background-color:#([0-9a-fA-F]{6})/i
+                );
+                if (!m) return false;
+                const h = m[1];
+                const r = parseInt(h.slice(0,2), 16);
+                const g = parseInt(h.slice(2,4), 16);
+                const b = parseInt(h.slice(4,6), 16);
+                return r > 150 && r > g * 2 && r > b * 2;
+            };
+            const cards = Array.from(document.querySelectorAll('div.imgcont')).filter(isRed);
+            const el = cards[idx];
             if (!el) return false;
-            el.scrollIntoView({{block: 'center', behavior: 'instant'}});
+            el.scrollIntoView({block: 'center', behavior: 'instant'});
             el.click();
             return true;
-            """
-        )
+        }""", card["idx"])
         if not clicked:
             logger.warning(f"Could not JS-click mythic card idx={card['idx']} ({index}/{total})")
             return {}

@@ -1,0 +1,7 @@
+{
+  "g2g_cookie": "session=YOUR_SESSION_COOKIE; csrf=YOUR_CSRF_TOKEN; _ga=...",
+  "g2g_listing_category": "raid-shadow-legends",
+  "check_interval_minutes": 10,
+  "telegram_token": "123456789:ABCDefgh...",
+  "telegram_chat_id": "123456789"
+}

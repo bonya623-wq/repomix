@@ -102,6 +102,18 @@ _GAME_HINTS = {
 }
 
 
+# Champion names that G2G censors in stored titles → pre-apply so title search matches
+_G2G_CENSORED: dict[str, str] = {
+    "Narses": "Na***s",
+}
+
+
+def _apply_g2g_censorship(text: str) -> str:
+    for original, censored in _G2G_CENSORED.items():
+        text = text.replace(original, censored)
+    return text
+
+
 def _get_hint(game_name: str) -> str:
     name_lower = game_name.lower()
     for key, hint in _GAME_HINTS.items():
@@ -217,6 +229,7 @@ def generate_brief_ai(
         with urllib.request.urlopen(req, timeout=15) as resp:
             result = json.loads(resp.read().decode("utf-8"))
         brief = result["content"][0]["text"].strip()
+        brief = _apply_g2g_censorship(brief)
         # Safety trim
         brief = brief[:max_chars]
         logger.info(f"AI brief [{game_name}]: {brief!r}")

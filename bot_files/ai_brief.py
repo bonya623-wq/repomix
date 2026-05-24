@@ -13,7 +13,18 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 _GAME_HINTS = {
-    "raid":        "Focus on: power level, legendary count, mythic count, gems, silver. Do NOT list individual champion names — G2G censors them and breaks search. Use only counts: '27 Legs', '5 Myths'.",
+    "raid":        (
+        "Strict order for Raid Shadow Legends:\n"
+        "1. Level — e.g. 'Lv65'\n"
+        "2. Mythic count — e.g. '3 Myths'\n"
+        "3. Legendary count — e.g. '27 Legs'\n"
+        "4. Power — e.g. '50K power'\n"
+        "5. Gems — e.g. '4300 gems'\n"
+        "6. Silver — e.g. '7M silver'\n"
+        "7. Key champion names — list up to 4, LAST\n"
+        "IMPORTANT: stats (1-6) MUST come before champion names. "
+        "This is critical for search — numbers are never censored, names sometimes are."
+    ),
     "wow":         (
         "Strict priority order for WoW account listings:\n"
         "1. GS/ilvl (e.g. '1750 GS', 'ilvl 450') — FIRST, most important\n"

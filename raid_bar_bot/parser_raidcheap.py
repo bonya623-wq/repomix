@@ -1,17 +1,20 @@
 """
-Parser for https://raid-cheap.com — Chinese RSL account marketplace.
+Parser for https://raid-cheap.com
 
-The site requires champion selection before showing any accounts.
-We use Playwright to:
-  1. Open the page (full browser, not a simple HTTP request)
-  2. Click ALL champion portrait cards to select them
-  3. Click "Search"
-  4. Collect all account listings from the results
-  5. Visit each account detail page and extract data
+Strategy:
+  - Click each MYTHIC champion card one at a time
+  - After each click: press Search → collect accounts → press Clear
+  - Deduplicate across all searches (one account may have several mythics)
+  - Return list sorted cheapest first
 
-Chinese text is auto-translated to English via deep-translator.
+Why mythics only:
+  - AND-logic search: selecting multiple heroes at once returns 0 results
+    unless an account has ALL of them
+  - Mythic accounts are the ones worth reselling
+  - ~30-40 mythics → ~30-40 searches (~2-3 min per cycle)
 """
 
+import asyncio
 import io
 import logging
 import re
@@ -22,7 +25,7 @@ from bs4 import BeautifulSoup
 from playwright.async_api import Browser, BrowserContext, Page, async_playwright
 
 from parser import AccountData, _parse_number, _parse_silver_millions
-from translator import translate_to_en, translate_champion_list
+from translator import translate_to_en
 
 logger = logging.getLogger(__name__)
 
@@ -30,13 +33,11 @@ BASE_URL = "https://raid-cheap.com"
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0.0.0 Safari/537.36"
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     ),
     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
 }
 
-# ── Optional OCR ──────────────────────────────────────────────────────────────
 try:
     import pytesseract
     from PIL import Image
@@ -46,11 +47,10 @@ except ImportError:
 
 
 # ---------------------------------------------------------------------------
-# Playwright scraper class
+# Playwright scraper
 # ---------------------------------------------------------------------------
 
 class RaidCheapScraper:
-    """Manages a Playwright browser session for raid-cheap.com."""
 
     def __init__(self) -> None:
         self._pw = None
@@ -76,94 +76,98 @@ class RaidCheapScraper:
             await self._pw.stop()
 
     # ------------------------------------------------------------------
-    # Step 1 — Select all champions and run Search
+    # Find mythic cards
     # ------------------------------------------------------------------
 
-    async def _select_all_champions_and_search(self, page: Page) -> bool:
+    async def _find_mythic_cards(self, page: Page) -> list:
         """
-        Click every champion portrait card, then click Search.
-        Returns True if at least one account result appeared.
-        """
-        await page.goto(BASE_URL, wait_until="networkidle", timeout=40_000)
+        Return locators for all MYTHIC champion cards on the page.
 
-        # The champion selection grid — try several selectors that match
-        # what's visible in the screenshot (portrait image cards in a grid).
-        card_selectors = [
-            "td img",           # table-based grid
-            ".champion-card",
-            "[class*='champion'] img",
-            "[class*='card'] img",
-            ".hero img",
-            "figure img",
-            "ul li img",
-            "div img[src*='champion']",
-            "div img[src*='hero']",
+        Mythic cards have a RED border/frame in the screenshot.
+        We try several selectors to find them. If nothing works,
+        a debug screenshot is saved so you can check what the page looks like
+        and tell us the correct CSS class.
+        """
+        # Selectors to try — ordered from most specific to broadest.
+        # The red border on mythic cards is the visual cue.
+        # Common patterns in such sites:
+        attempts = [
+            # 1. Explicit rarity attribute
+            "[data-rarity='mythic'] img",
+            "[data-rarity='6'] img",
+            "[data-rarity='5'] img",
+            ".mythic img",
+            ".rarity-mythic img",
+            "[class*='mythic'] img",
+            # 2. Red border via class name
+            ".card-red img",
+            ".border-red img",
+            "[class*='red'] img",
+            # 3. The card container itself (clickable parent, not the img)
+            "[data-rarity='mythic']",
+            "[class*='mythic']",
         ]
 
-        clicked = 0
-        for sel in card_selectors:
+        for sel in attempts:
             cards = await page.locator(sel).all()
-            if not cards:
-                continue
-            logger.info(f"Clicking {len(cards)} champion cards via selector '{sel}'")
-            for card in cards:
-                try:
-                    await card.click(timeout=2_000)
-                    clicked += 1
-                except Exception:
-                    # Some cards may be off-screen; scroll into view first
-                    try:
-                        await card.scroll_into_view_if_needed()
-                        await card.click(timeout=2_000)
-                        clicked += 1
-                    except Exception:
-                        pass
-            if clicked > 0:
-                break
+            if cards:
+                logger.info(f"Found {len(cards)} mythic cards via selector: {sel!r}")
+                return cards
 
-        if clicked == 0:
-            logger.warning(
-                "Could not click any champion cards on raid-cheap.com. "
-                "Saving debug screenshot to raidcheap_debug.png"
-            )
-            await page.screenshot(path="raidcheap_debug.png")
-            return False
+        # Nothing matched — save screenshot and log the first 3000 chars of HTML
+        await page.screenshot(path="raidcheap_mythic_not_found.png")
+        html_preview = (await page.content())[:3000]
+        logger.error(
+            "Could not find mythic champion cards on raid-cheap.com.\n"
+            "Screenshot saved to raidcheap_mythic_not_found.png\n"
+            f"HTML preview:\n{html_preview}"
+        )
+        return []
 
-        logger.info(f"Selected {clicked} champion cards")
+    # ------------------------------------------------------------------
+    # Click one card → Search → collect → Clear
+    # ------------------------------------------------------------------
 
-        # Click the Search button (labelled "Search" in English per screenshot)
-        search_selectors = [
+    async def _click_search_btn(self, page: Page) -> bool:
+        for sel in [
             "button:has-text('Search')",
             "input[value='Search']",
             "button:has-text('搜索')",
-            "#search-btn",
             ".search-btn",
             "button[type='submit']",
-        ]
-        for sel in search_selectors:
+        ]:
             try:
                 btn = page.locator(sel).first
                 if await btn.count() > 0:
                     await btn.click()
-                    break
+                    return True
             except Exception:
                 continue
+        logger.warning("Search button not found")
+        return False
 
-        await page.wait_for_load_state("networkidle", timeout=30_000)
+    async def _click_clear_btn(self, page: Page) -> None:
+        for sel in [
+            "button:has-text('Clear')",
+            "button:has-text('清除')",
+            "button:has-text('Reset')",
+            ".clear-btn",
+        ]:
+            try:
+                btn = page.locator(sel).first
+                if await btn.count() > 0:
+                    await btn.click()
+                    await page.wait_for_load_state("networkidle", timeout=10_000)
+                    return
+            except Exception:
+                continue
+        # Fallback: reload the page to reset selection
+        logger.debug("Clear button not found — reloading page to reset")
+        await page.goto(BASE_URL, wait_until="networkidle", timeout=30_000)
 
-        # Save a debug screenshot so you can verify results
-        await page.screenshot(path="raidcheap_after_search.png")
-        logger.info("Search done — screenshot saved to raidcheap_after_search.png")
-        return True
-
-    # ------------------------------------------------------------------
-    # Step 2 — Parse search results page
-    # ------------------------------------------------------------------
-
-    async def _parse_results_page(self, page: Page) -> list[tuple[str, str, float]]:
+    async def _collect_results(self, page: Page) -> dict[str, tuple[str, float]]:
         """
-        Extract (account_id, detail_url, price_usd) from the search results.
-        Handles pagination if a 'Next page' link exists.
+        Walk through all result pages and return {account_id: (url, price)}.
         """
         results: dict[str, tuple[str, float]] = {}
 
@@ -171,74 +175,117 @@ class RaidCheapScraper:
             content = await page.content()
             soup = BeautifulSoup(content, "lxml")
 
-            # --- Find account listing links ---
+            # --- Find account links ---
             for a in soup.find_all("a", href=True):
                 href: str = a["href"]
+                # Typical patterns: /account/ID, /item/ID, /product/ID, /buy/ID
                 m = re.search(
                     r"/(?:account|item|product|listing|detail|buy|order)/([A-Za-z0-9_-]{3,})",
                     href,
                 )
                 if not m:
-                    # Try just /ID at end of path
                     m = re.search(r"/([A-Za-z0-9_-]{6,})/?$", href)
                 if m:
-                    raw_id = m.group(1)
-                    if raw_id in ("search", "index", "page", "list"):
+                    rid = m.group(1)
+                    if rid in ("search", "index", "page", "list", "filter"):
                         continue
-                    if raw_id not in results:
-                        full_url = href if href.startswith("http") else BASE_URL + href
-                        price = _extract_price_from_tag(a)
-                        results[raw_id] = (full_url, price)
+                    if rid not in results:
+                        full = href if href.startswith("http") else BASE_URL + href
+                        price = _price_from_tag(a)
+                        results[rid] = (full, price)
 
-            # --- Also look for [data-id] cards ---
+            # --- [data-id] cards ---
             for card in soup.find_all(attrs={"data-id": True}):
-                raw_id = card["data-id"].strip()
-                if re.match(r"[A-Za-z0-9_-]{3,}", raw_id) and raw_id not in results:
-                    price = _extract_price_from_tag(card)
-                    url = f"{BASE_URL}/account/{raw_id}"
-                    results[raw_id] = (url, price)
+                rid = card["data-id"].strip()
+                if re.match(r"[A-Za-z0-9_-]{3,}", rid) and rid not in results:
+                    results[rid] = (f"{BASE_URL}/account/{rid}", _price_from_tag(card))
 
-            # --- Pagination: follow "Next" link if present ---
-            next_link = soup.find("a", string=re.compile(r"Next|下一页|›|»", re.I))
-            if not next_link or not next_link.get("href"):
+            # --- Pagination ---
+            next_a = soup.find("a", string=re.compile(r"Next|下一页|›|»", re.I))
+            if not next_a or not next_a.get("href"):
                 break
-            next_url = next_link["href"]
+            next_url = next_a["href"]
             if not next_url.startswith("http"):
                 next_url = BASE_URL + next_url
-            logger.info(f"Following pagination → {next_url}")
             await page.goto(next_url, wait_until="networkidle", timeout=20_000)
 
-        if not results:
-            logger.warning(
-                "No account listings found in search results. "
-                "Check raidcheap_after_search.png to see what the page looks like."
-            )
+        return results
 
-        logger.info(f"raid-cheap.com search: {len(results)} accounts found")
-        return [("rc_" + rid, url, price) for rid, (url, price) in results.items()]
+    async def _search_one_mythic(
+        self, page: Page, card, index: int, total: int
+    ) -> dict[str, tuple[str, float]]:
+        """Click one mythic card, search, collect, clear. Return results dict."""
+        try:
+            await card.scroll_into_view_if_needed()
+            await card.click(timeout=3_000)
+        except Exception as e:
+            logger.warning(f"Could not click card {index}: {e}")
+            return {}
+
+        ok = await self._click_search_btn(page)
+        if not ok:
+            await self._click_clear_btn(page)
+            return {}
+
+        await page.wait_for_load_state("networkidle", timeout=20_000)
+        results = await self._collect_results(page)
+        logger.info(f"  Mythic {index}/{total}: {len(results)} accounts found")
+
+        # Go back to selection page for next mythic
+        await self._click_clear_btn(page)
+
+        return results
 
     # ------------------------------------------------------------------
-    # Public: fetch the listing
+    # Public: full listing fetch
     # ------------------------------------------------------------------
 
     async def fetch_listing(self) -> list[tuple[str, str, float]]:
-        """Open raid-cheap.com, select all champs, search, return (id, url, price)."""
+        """
+        Search raid-cheap.com mythic by mythic.
+        Returns (account_id, detail_url, price_usd) sorted cheapest first.
+        """
         page = await self._ctx.new_page()
         try:
-            ok = await self._select_all_champions_and_search(page)
-            if not ok:
+            await page.goto(BASE_URL, wait_until="networkidle", timeout=40_000)
+
+            mythic_cards = await self._find_mythic_cards(page)
+            if not mythic_cards:
+                logger.error("No mythic cards found — check raidcheap_mythic_not_found.png")
                 return []
-            return await self._parse_results_page(page)
+
+            logger.info(f"Starting mythic-by-mythic search ({len(mythic_cards)} mythics)")
+            all_results: dict[str, tuple[str, float]] = {}
+
+            for i, card in enumerate(mythic_cards, 1):
+                batch = await self._search_one_mythic(page, card, i, len(mythic_cards))
+                for rid, (url, price) in batch.items():
+                    if rid not in all_results:
+                        all_results[rid] = (url, price)
+
+                # Small pause — be polite to the server
+                await asyncio.sleep(1)
+
+            final = [
+                ("rc_" + rid, url, price)
+                for rid, (url, price) in all_results.items()
+            ]
+            final.sort(key=lambda x: x[2])  # cheapest first
+            logger.info(
+                f"raid-cheap.com: {len(final)} unique accounts across "
+                f"{len(mythic_cards)} mythic searches"
+            )
+            return final
+
         finally:
             await page.close()
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Price helper
 # ---------------------------------------------------------------------------
 
-def _extract_price_from_tag(tag) -> float:
-    """Walk up the DOM to find a USD price near this tag."""
+def _price_from_tag(tag) -> float:
     candidates = [tag]
     p = getattr(tag, "parent", None)
     for _ in range(5):
@@ -258,7 +305,6 @@ def _extract_price_from_tag(tag) -> float:
                 return float(m.group(1) or m.group(2))
             except ValueError:
                 pass
-        # CNY fallback (rough /7.2 conversion)
         m2 = re.search(r"([0-9]+(?:\.[0-9]{1,2})?)\s*(?:元|¥|CNY|RMB)", text)
         if m2:
             try:
@@ -268,53 +314,9 @@ def _extract_price_from_tag(tag) -> float:
     return 0.0
 
 
-def _extract_resources(text: str) -> dict:
-    def _int(pattern: str):
-        m = re.search(pattern, text, re.I)
-        if not m:
-            return None
-        v = _parse_number(m.group(1))
-        return int(v) if v is not None else None
-
-    def _float(pattern: str):
-        m = re.search(pattern, text, re.I)
-        return _parse_number(m.group(1)) if m else None
-
-    silver_m = re.search(r"[Ss]ilver[:\s]+([0-9.,]+\s*[MmKk]?)", text)
-    silver = _parse_silver_millions(silver_m.group(1)) if silver_m else None
-    gems = _int(r"[Gg]ems?[:\s]+([0-9,]+)")
-    energy = _float(r"[Ee]nergy[:\s]+([0-9.,]+\s*[MmKk]?)")
-    cb_keys = _int(r"CB\s*[Kk]eys?[:\s]+([0-9]+)")
-    brews = _int(r"[Bb]rews?[:\s]+([0-9]+)")
-
-    age_m = re.search(r"(\d+)\s+days?\s+old|[Aa]ge[:\s]+(\d+)", text)
-    age = int(age_m.group(1) or age_m.group(2)) if age_m else None
-
-    heroes_m = re.search(r"[Tt]otal\s+[Hh]eroes?[:\s]+(\d+)|[Hh]eroes?[:\s]+(\d+)", text)
-    heroes = int(heroes_m.group(1) or heroes_m.group(2)) if heroes_m else None
-
-    tomes: dict[str, int] = {}
-    for rarity in ("Rare", "Epic", "Legendary"):
-        m = re.search(rf"(\d+)\s+{rarity}\s+[Tt]ome", text, re.I)
-        if m:
-            tomes[rarity] = int(m.group(1))
-
-    shards: dict[str, int] = {}
-    for stype in ("Ancient", "Void", "Sacred", "Epic", "Legendary"):
-        m = re.search(rf"(\d+)\s+{stype}\s+[Ss]hard", text, re.I)
-        if m:
-            shards[stype] = int(m.group(1))
-
-    chickens: dict[str, int] = {}
-    for cm in re.finditer(r"([2-6])[★*]\s*[×xX](\d+)", text):
-        chickens[f"{cm.group(1)}★"] = int(cm.group(2))
-
-    return dict(
-        silver=silver, gems=gems, energy=energy, cb_keys=cb_keys,
-        brews=brews, account_age_days=age, total_heroes=heroes,
-        tomes=tomes, shards=shards, chickens=chickens,
-    )
-
+# ---------------------------------------------------------------------------
+# Detail page
+# ---------------------------------------------------------------------------
 
 async def _ocr_image(url: str, client: httpx.AsyncClient) -> str:
     if not _OCR:
@@ -332,76 +334,104 @@ async def _ocr_image(url: str, client: httpx.AsyncClient) -> str:
         return ""
 
 
-# ---------------------------------------------------------------------------
-# Detail page fetch (uses plain httpx — detail pages are static HTML)
-# ---------------------------------------------------------------------------
+def _extract_resources(text: str) -> dict:
+    def _int(pat):
+        m = re.search(pat, text, re.I)
+        if not m:
+            return None
+        v = _parse_number(m.group(1))
+        return int(v) if v is not None else None
+
+    def _flt(pat):
+        m = re.search(pat, text, re.I)
+        return _parse_number(m.group(1)) if m else None
+
+    sm = re.search(r"[Ss]ilver[:\s]+([0-9.,]+\s*[MmKk]?)", text)
+    silver = _parse_silver_millions(sm.group(1)) if sm else None
+    gems = _int(r"[Gg]ems?[:\s]+([0-9,]+)")
+    energy = _flt(r"[Ee]nergy[:\s]+([0-9.,]+\s*[MmKk]?)")
+    cb_keys = _int(r"CB\s*[Kk]eys?[:\s]+([0-9]+)")
+    brews = _int(r"[Bb]rews?[:\s]+([0-9]+)")
+
+    am = re.search(r"(\d+)\s+days?\s+old|[Aa]ge[:\s]+(\d+)", text)
+    age = int(am.group(1) or am.group(2)) if am else None
+
+    hm = re.search(r"[Tt]otal\s+[Hh]eroes?[:\s]+(\d+)|[Hh]eroes?[:\s]+(\d+)", text)
+    heroes = int(hm.group(1) or hm.group(2)) if hm else None
+
+    tomes: dict[str, int] = {}
+    for r in ("Rare", "Epic", "Legendary"):
+        m = re.search(rf"(\d+)\s+{r}\s+[Tt]ome", text, re.I)
+        if m:
+            tomes[r] = int(m.group(1))
+
+    shards: dict[str, int] = {}
+    for s in ("Ancient", "Void", "Sacred", "Epic", "Legendary"):
+        m = re.search(rf"(\d+)\s+{s}\s+[Ss]hard", text, re.I)
+        if m:
+            shards[s] = int(m.group(1))
+
+    chickens: dict[str, int] = {}
+    for cm in re.finditer(r"([2-6])[★*]\s*[×xX](\d+)", text):
+        chickens[f"{cm.group(1)}★"] = int(cm.group(2))
+
+    return dict(
+        silver=silver, gems=gems, energy=energy, cb_keys=cb_keys,
+        brews=brews, account_age_days=age, total_heroes=heroes,
+        tomes=tomes, shards=shards, chickens=chickens,
+    )
+
 
 async def fetch_raidcheap_account(
     account_id: str, detail_url: str, price_usd: float
 ) -> Optional[AccountData]:
-    """Fetch and parse one account detail page from raid-cheap.com."""
     try:
         async with httpx.AsyncClient(
             timeout=30, follow_redirects=True, headers=HEADERS
         ) as client:
             resp = await client.get(detail_url)
             resp.raise_for_status()
-            html = resp.text
-
-            soup = BeautifulSoup(html, "lxml")
-            raw_text = soup.get_text(separator="\n")
-            translated = translate_to_en(raw_text)
+            soup = BeautifulSoup(resp.text, "lxml")
+            raw = soup.get_text(separator="\n")
+            translated = translate_to_en(raw)
             combined = translated
 
-            # OCR account screenshots
-            img_tags = soup.find_all("img", src=True)
-            ocr_parts: list[str] = []
-            for img in img_tags:
+            for img in soup.find_all("img", src=True):
                 src: str = img["src"]
                 if any(s in src.lower() for s in ("logo", "icon", "avatar", "banner", "btn")):
                     continue
-                full_src = src if src.startswith("http") else BASE_URL + src
-                ocr_text = await _ocr_image(full_src, client)
-                if ocr_text.strip():
-                    ocr_parts.append(ocr_text)
-            if ocr_parts:
-                combined += "\n\n" + "\n\n".join(ocr_parts)
+                full = src if src.startswith("http") else BASE_URL + src
+                ocr = await _ocr_image(full, client)
+                if ocr.strip():
+                    combined += "\n\n" + ocr
 
-        # Champion lists — try regex on translated text
         mythics: list[str] = []
         legendaries: list[str] = []
-
-        myth_m = re.search(r"Mythic[^:]*:([^\n]{5,200})", combined, re.I)
-        if myth_m:
-            mythics = [c.strip() for c in re.split(r"[,，•·]", myth_m.group(1)) if c.strip()]
-
-        leg_m = re.search(r"Legendary[^:]*:([^\n]{5,500})", combined, re.I)
-        if leg_m:
+        mm = re.search(r"Mythic[^:]*:([^\n]{5,200})", combined, re.I)
+        if mm:
+            mythics = [c.strip() for c in re.split(r"[,，•·]", mm.group(1)) if c.strip()]
+        lm = re.search(r"Legendary[^:]*:([^\n]{5,500})", combined, re.I)
+        if lm:
             legendaries = [
-                c.strip()
-                for c in re.split(r"[,，•·]", leg_m.group(1))
+                c.strip() for c in re.split(r"[,，•·]", lm.group(1))
                 if c.strip() and c.strip() not in mythics
             ]
-
-        res = _extract_resources(combined)
 
         return AccountData(
             account_id=account_id,
             price_usd=price_usd,
             mythic_champions=mythics,
             legendary_champions=legendaries,
-            **res,
+            **_extract_resources(combined),
         )
-
     except Exception as exc:
-        logger.error(f"raid-cheap.com detail fetch failed for {account_id}: {exc}")
+        logger.error(f"Detail fetch failed {account_id}: {exc}")
         return None
 
 
 # ---------------------------------------------------------------------------
-# Public API used by main.py
+# Used by main.py
 # ---------------------------------------------------------------------------
 
-async def fetch_raidcheap_list(scraper: "RaidCheapScraper") -> list[tuple[str, str, float]]:
-    """Fetch (account_id, url, price) list using an existing RaidCheapScraper."""
+async def fetch_raidcheap_list(scraper: RaidCheapScraper) -> list[tuple[str, str, float]]:
     return await scraper.fetch_listing()

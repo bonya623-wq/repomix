@@ -27,7 +27,7 @@ import games.diablo_game as di_game
 import diablo_slots
 import games.wuthering_game as ww_game
 import wuthering_slots
-from ai_brief import generate_brief_ai
+from ai_brief import generate_brief_ai, check_lot_safe_ai
 import storage
 
 LOG_DIR = Path("logs")
@@ -464,6 +464,15 @@ async def run_pass(funpay: FunPayScraper, g2g: G2GBot, game_cfg: dict, is_first_
             _ai_extra = f"Server: {lot.region or 'Global'}"
         elif "raid" in game_cfg["name"].lower():
             _ai_extra = f"Mythics: {lot.m_heroes or 0}, Legendaries: {lot.l_heroes or 0}"
+
+        # AI фильтр для Raid — ловим несменную почту / Facebook которые не попали в blacklist
+        if "raid" in game_cfg["name"].lower() and _claude_api_key:
+            _full_text = f"{lot.title or ''}\n{lot.description or ''}\n{lot.detailed_description or ''}".strip()
+            if not check_lot_safe_ai(_full_text, api_key=_claude_api_key):
+                logger.info(f"AI фильтр: пропускаем лот {lot.lot_id} (несменная почта/FB)")
+                storage.save_used_lot(lot.lot_id, game_name)
+                used_lots.add(lot.lot_id)
+                continue
 
         # Roblox — без brief, оставляем как есть
         if game_cfg.get("is_roblox"):

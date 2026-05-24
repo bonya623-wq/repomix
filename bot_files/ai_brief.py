@@ -99,7 +99,58 @@ def _get_hint(game_name: str) -> str:
     return "Focus on: level, key items, notable stats"
 
 
-def generate_brief_ai(
+def check_lot_safe_ai(description: str, api_key: str = "") -> bool:
+    """
+    Проверяет через Claude можно ли публиковать лот.
+    Возвращает False если в описании несменная почта или Facebook-привязка.
+    При ошибке API возвращает True (не блокируем лот при сбое).
+    """
+    if not api_key or not description.strip():
+        return True
+
+    text = description.strip()[:1000]
+
+    prompt = (
+        "You are checking a game account listing. Answer ONLY 'YES' or 'NO'.\n\n"
+        "Does this listing mention ANY of the following:\n"
+        "- Email cannot be changed / non-changeable email / email is fixed\n"
+        "- Facebook login / Facebook linked / account bound to Facebook\n"
+        "- Any similar restriction that prevents the buyer from securing the account\n\n"
+        f"Listing text:\n{text}\n\n"
+        "Answer YES if any such restriction is mentioned, NO if not."
+    )
+
+    payload = json.dumps({
+        "model": "claude-haiku-4-5-20251001",
+        "max_tokens": 5,
+        "messages": [{"role": "user", "content": prompt}],
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        data=payload,
+        headers={
+            "x-api-key":         api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type":      "application/json",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+        answer = result["content"][0]["text"].strip().upper()
+        is_unsafe = answer.startswith("YES")
+        if is_unsafe:
+            logger.info(f"AI фильтр: лот заблокирован (несменная почта/FB)")
+        return not is_unsafe
+    except Exception as e:
+        logger.warning(f"AI фильтр: ошибка ({e}) — лот пропускаем")
+        return True
+
+
+
     game_name: str,
     description: str,
     extra_context: str = "",

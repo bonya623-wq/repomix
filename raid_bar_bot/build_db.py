@@ -15,6 +15,7 @@ image — no translation needed, works 100% correctly.
 Requires:  pip install imagehash Pillow httpx beautifulsoup4 lxml
 """
 
+import argparse
 import asyncio
 import io
 import json
@@ -30,6 +31,7 @@ from PIL import Image
 
 DB_FILE = Path("champions_db.json")
 LOG_FILE = Path("build_db.log")
+CONFIG_FILE = Path("config.json")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -146,14 +148,39 @@ async def hash_portrait(client: httpx.AsyncClient, url: str) -> str | None:
 # Main
 # ---------------------------------------------------------------------------
 
-async def build() -> None:
+def _load_proxy(proxy_arg: str) -> dict | None:
+    """Return httpx proxy dict from --proxy arg or config.json, or None."""
+    if proxy_arg:
+        return {"http://": proxy_arg, "https://": proxy_arg}
+    if CONFIG_FILE.exists():
+        cfg = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        p = cfg.get("proxy", {})
+        server = p.get("server", "")
+        if server:
+            user = p.get("username", "")
+            pw   = p.get("password", "")
+            if user and pw:
+                # inject credentials into URL: http://user:pass@host:port
+                proto, rest = server.split("://", 1)
+                url = f"{proto}://{user}:{pw}@{rest}"
+            else:
+                url = server
+            return {"http://": url, "https://": url}
+    return None
+
+
+async def build(proxy_arg: str = "") -> None:
     existing: dict[str, str] = {}
     if DB_FILE.exists():
         with open(DB_FILE, encoding="utf-8") as f:
             existing = json.load(f)
         logger.info(f"Existing DB: {len(existing)} entries — will add new ones only")
 
-    async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True) as client:
+    proxies = _load_proxy(proxy_arg)
+    if proxies:
+        logger.info(f"Using proxy: {list(proxies.values())[0]}")
+
+    async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True, proxies=proxies) as client:
         champions = await fetch_champion_list(client)
 
         if not champions:
@@ -188,4 +215,12 @@ async def build() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(build())
+    ap = argparse.ArgumentParser(description="Build RSL champion portrait DB")
+    ap.add_argument(
+        "--proxy",
+        default="",
+        metavar="URL",
+        help="Proxy URL, e.g. http://user:pass@host:port  (overrides config.json)",
+    )
+    args = ap.parse_args()
+    asyncio.run(build(args.proxy))

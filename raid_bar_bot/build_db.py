@@ -1,7 +1,8 @@
 """
 One-time setup script — build the RSL champion portrait database.
 
-Source: ayumilove.net (accessible worldwide, English names, in-game portraits)
+Source: raid-shadow-legends.fandom.com (official RSL wiki, globally accessible)
+Uses the MediaWiki API — no scraping, no proxy needed.
 
 Downloads every champion portrait, computes a perceptual hash (pHash) for each,
 and saves:
@@ -11,23 +12,18 @@ and saves:
 Run ONCE before starting the bot:
     python build_db.py
 
-After that the bot uses this file to identify champions by their portrait
-image — no translation needed, works 100% correctly.
-
-Requires:  pip install imagehash Pillow httpx beautifulsoup4 lxml
+Requires:  pip install imagehash Pillow httpx
 """
 
 import asyncio
 import io
 import json
 import logging
-import re
 import sys
 from pathlib import Path
 
 import httpx
 import imagehash
-from bs4 import BeautifulSoup
 from PIL import Image
 
 DB_FILE = Path("champions_db.json")
@@ -47,93 +43,54 @@ HEADERS = {
     )
 }
 
-ROOT = "https://ayumilove.net"
-LIST_URL = "https://ayumilove.net/raid-shadow-legends-champion-tier-list/"
+FANDOM_API = "https://raid-shadow-legends.fandom.com/api.php"
 
 
 # ---------------------------------------------------------------------------
-# Fetch champion list from ayumilove.net
+# Fetch champion list via MediaWiki API
 # ---------------------------------------------------------------------------
 
 async def fetch_champion_list(client: httpx.AsyncClient) -> list[tuple[str, str]]:
     """
-    Return [(english_name, portrait_url), ...] for every RSL champion.
+    Returns [(english_name, portrait_url), ...] for every RSL champion.
 
-    ayumilove.net structure: champion cards inside the tier table,
-    each card is an <a> link to the champion guide page, with an <img>
-    whose alt= is the English champion name.
+    Uses the MediaWiki generator API to list all pages in Category:Champions
+    and fetch their lead image (the in-game portrait) in one paginated request.
     """
-    logger.info(f"Fetching champion list from {LIST_URL} ...")
-    resp = await client.get(LIST_URL, timeout=60)
-    resp.raise_for_status()
-    soup = BeautifulSoup(resp.text, "lxml")
+    champions: dict[str, str] = {}
+    params: dict = {
+        "action":     "query",
+        "generator":  "categorymembers",
+        "gcmtitle":   "Category:Champions",
+        "gcmtype":    "page",
+        "gcmlimit":   "50",
+        "prop":       "pageimages",
+        "pithumbsize": "300",
+        "format":     "json",
+    }
 
-    champions: dict[str, str] = {}  # name → portrait_url
+    page_num = 0
+    while True:
+        page_num += 1
+        logger.info(f"  API page {page_num} — {len(champions)} champions so far…")
+        resp = await client.get(FANDOM_API, params=params, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
 
-    # Strategy 1 — links to individual champion guide pages
-    # href pattern: /raid-shadow-legends-NAME-skill-mastery-equip-guide/
-    for a in soup.find_all("a", href=re.compile(r"raid-shadow-legends-.+-skill", re.I)):
-        img = a.find("img")
-        if not img:
-            continue
+        for page in data.get("query", {}).get("pages", {}).values():
+            name  = page.get("title", "").strip()
+            thumb = page.get("thumbnail", {}).get("source", "")
+            # Skip category/template pages; champion names are 2–40 chars
+            if name and thumb and 2 <= len(name) <= 40:
+                champions[name] = thumb
 
-        # Name from alt attribute
-        name = (img.get("alt") or "").strip()
+        if "continue" not in data:
+            break
+        params.update(data["continue"])
+        await asyncio.sleep(0.3)
 
-        # Fallback: derive name from href slug
-        if not name:
-            slug = a["href"].strip("/").split("/")[-1]
-            # strip suffix -skill-mastery-equip-guide
-            slug = re.sub(r"-skill.*$", "", slug)
-            name = slug.replace("-", " ").title()
-
-        src = (
-            img.get("src")
-            or img.get("data-src")
-            or img.get("data-lazy-src")
-            or img.get("data-original", "")
-        )
-        if name and src and len(name) > 2 and name not in champions:
-            if not src.startswith("http"):
-                src = ROOT + src
-            champions[name] = src
-
-    # Strategy 2 — any <img> whose alt looks like a champion name + src has "champion" in path
-    if not champions:
-        logger.info("Strategy 1 found nothing — trying strategy 2 (img[alt] with champion path)")
-        for img in soup.find_all("img", alt=True):
-            alt = img["alt"].strip()
-            src = (
-                img.get("src")
-                or img.get("data-src")
-                or img.get("data-lazy-src", "")
-            )
-            if not src:
-                continue
-            if not src.startswith("http"):
-                src = ROOT + src
-            if (
-                3 <= len(alt) <= 45
-                and re.search(r"[A-Z]", alt)          # at least one capital → name
-                and "champion" in src.lower()
-                and alt not in champions
-            ):
-                champions[alt] = src
-
-    # Strategy 3 — broadest fallback: any <img alt> 3–45 chars with a plausible portrait URL
-    if not champions:
-        logger.info("Strategy 2 found nothing — trying strategy 3 (broad img scan)")
-        for img in soup.find_all("img", alt=True):
-            alt = img["alt"].strip()
-            src = img.get("src") or img.get("data-src", "")
-            if src and 3 <= len(alt) <= 45 and re.search(r"[A-Z]", alt):
-                if not src.startswith("http"):
-                    src = ROOT + src
-                champions.setdefault(alt, src)
-
-    result = list(champions.items())
-    logger.info(f"Found {len(result)} champions")
-    return result
+    logger.info(f"Total champions found: {len(champions)}")
+    return list(champions.items())
 
 
 # ---------------------------------------------------------------------------
@@ -167,10 +124,7 @@ async def build() -> None:
         champions = await fetch_champion_list(client)
 
         if not champions:
-            logger.error(
-                "No champions found on ayumilove.net.\n"
-                "The page structure may have changed — check build_db.log."
-            )
+            logger.error("No champions found — check your internet connection.")
             return
 
         db: dict[str, str] = dict(existing)
@@ -186,7 +140,7 @@ async def build() -> None:
                 db[h] = name
                 logger.info(f"[{i:>3}/{len(champions)}] OK    {name}")
             else:
-                logger.warning(f"[{i:>3}/{len(champions)}] FAIL  {name}  {portrait_url}")
+                logger.warning(f"[{i:>3}/{len(champions)}] FAIL  {name}")
 
             await asyncio.sleep(0.2)
 

@@ -131,14 +131,18 @@ class RaidCheapScraper:
                 resp = await client.get(
                     f"{BASE_URL}/go.php",
                     params={
-                        "id[]":     str(champ_id),
-                        "game_id":  GAME_ID,
-                        "page":     str(page),
-                        "sort":     "price_asc",
+                        "id[]":    str(champ_id),
+                        "num[]":   "1",       # minimum 1 copy of the champion
+                        "game_id": GAME_ID,
+                        "page":    str(page),
+                        "sort":    "price_asc",
                     },
                     timeout=30,
                 )
                 if resp.status_code != 200:
+                    logger.warning(
+                        f"go.php HTTP {resp.status_code} for {champ_name} p{page}"
+                    )
                     break
                 data = resp.json()
             except Exception as exc:
@@ -227,6 +231,14 @@ class RaidCheapScraper:
         _ACCOUNT_CACHE = {}
 
         async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True) as client:
+            # Visit main page first — the server sets a session cookie
+            # that go.php requires; without it every search returns HTTP 500
+            try:
+                await client.get(BASE_URL, timeout=20)
+                logger.debug("Session cookie obtained from main page")
+            except Exception as exc:
+                logger.warning(f"Could not fetch main page for session: {exc}")
+
             await self._load_champions(client)
 
             all_raw: dict[str, dict] = {}

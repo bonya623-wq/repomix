@@ -360,13 +360,25 @@ async def main() -> None:
         logger.info(f"G2G: using proxy {proxy_cfg['server']}")
 
     async with async_playwright() as pw:
-        context = await pw.chromium.launch_persistent_context(
+        launch_kwargs = dict(
             user_data_dir=profile_dir,
             headless=headless,
             args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
             viewport={"width": 1280, "height": 900},
             **proxy_kwargs,
         )
+        context = None
+        for attempt in range(3):
+            try:
+                context = await pw.chromium.launch_persistent_context(**launch_kwargs)
+                break
+            except Exception as exc:
+                logger.warning(f"Chrome launch failed (attempt {attempt + 1}/3): {exc}")
+                if attempt < 2:
+                    await asyncio.sleep(2)
+        if context is None:
+            logger.error("Could not launch Chrome after 3 attempts — exiting")
+            return
 
         async with RaidCheapScraper(context) as scraper:
 

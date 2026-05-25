@@ -18,7 +18,6 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Optional
 
-import httpx
 from playwright.async_api import Response
 
 from parser import AccountData
@@ -92,17 +91,48 @@ class RaidCheapScraper:
     # ── Champion catalogue ─────────────────────────────────────────────────────
 
     async def _load_champions(self) -> None:
-        """Fetch champion list from cat.php using the active tab's category ID."""
-        # Read category ID from the active nav tab on the page (avoids hardcoding)
-        cat_id = await self._page.evaluate(
-            "() => document.querySelector('.top-nav a.current')?.dataset?.id || '51'"
+        """
+        Click the Champions nav tab and intercept the cat.php AJAX response.
+        Works regardless of category/game IDs used by the specific site.
+        """
+        page = self._page
+        champions: list[dict] = []
+
+        # Find the "Champions" tab by text content
+        champ_link = await page.query_selector(
+            ".top-nav a:has-text('Champion'), .top-nav a:has-text('champion')"
         )
-        async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True) as client:
-            resp = await client.get(
-                f"{BASE_URL}/cat.php", params={"id": cat_id}, timeout=20
-            )
-            resp.raise_for_status()
-            champions = resp.json().get("data", [])
+        if not champ_link:
+            # Fall back to the first nav link
+            champ_link = await page.query_selector(".top-nav li > a")
+
+        if champ_link is None:
+            logger.error("Cannot find Champions nav tab — aborting champion load")
+            return
+
+        # Intercept the cat.php response triggered by the click
+        cat_future: asyncio.Future = asyncio.get_event_loop().create_future()
+
+        async def on_cat(response: Response) -> None:
+            if "cat.php" not in response.url or cat_future.done():
+                return
+            try:
+                data = await response.json()
+                cat_future.set_result(data.get("data", []))
+            except Exception as exc:
+                cat_future.set_exception(exc)
+
+        page.on("response", on_cat)
+        await champ_link.click()
+
+        try:
+            champions = await asyncio.wait_for(cat_future, timeout=15.0)
+        except Exception as exc:
+            logger.warning(f"cat.php intercept failed: {exc}")
+        finally:
+            page.remove_listener("response", on_cat)
+
+        await page.wait_for_timeout(400)
 
         self._color_by_name = {}
         self._mythic_champs = []
@@ -252,21 +282,10 @@ class RaidCheapScraper:
         global _ACCOUNT_CACHE
         _ACCOUNT_CACHE = {}
 
-        logger.info("Navigating to raid-cheap.com …")
+        logger.info(f"Navigating to {BASE_URL} …")
         await self._page.goto(BASE_URL, wait_until="networkidle", timeout=30_000)
 
-        # Static page HTML may have stale cards — click the active Champions tab
-        # to trigger cat.php AJAX reload and get the full current champion list.
-        try:
-            async with self._page.expect_response(
-                lambda r: "cat.php" in r.url, timeout=10_000
-            ):
-                await self._page.click(".top-nav a.current", timeout=5_000)
-            await self._page.wait_for_timeout(600)
-            logger.debug("Card list refreshed via Champions tab click")
-        except Exception as e:
-            logger.warning(f"Could not refresh card list: {e}")
-
+        # _load_champions clicks the Champions tab which also refreshes card-list
         await self._load_champions()
 
         all_raw: dict[str, dict] = {}

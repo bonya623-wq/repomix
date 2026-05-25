@@ -83,58 +83,44 @@ class RaidCheapScraper:
 
     async def _load_champions(self) -> None:
         """
-        Click the Champions nav tab and intercept the cat.php AJAX response.
-        Populates _color_by_name (en_name → border_color) and _mythic_champs.
+        Read champion data directly from the DOM (.card-list li[data-id]).
+        The page HTML already contains all cards with border_color in inline style.
+        No cat.php AJAX needed.
         """
         page = self._page
-        champions: list[dict] = []
 
-        champ_link = await page.query_selector(
-            ".top-nav a:has-text('Champion'), .top-nav a:has-text('champion')"
-        )
-        if not champ_link:
-            champ_link = await page.query_selector(".top-nav li > a")
+        await page.wait_for_selector(".card-list li[data-id]", timeout=15_000)
 
-        if champ_link is None:
-            logger.error("Cannot find Champions nav tab")
-            return
-
-        cat_future: asyncio.Future = asyncio.get_event_loop().create_future()
-
-        async def on_cat(response: Response) -> None:
-            if "cat.php" not in response.url or cat_future.done():
-                return
-            try:
-                data = await response.json()
-                cat_future.set_result(data.get("data", []))
-            except Exception as exc:
-                cat_future.set_exception(exc)
-
-        page.on("response", on_cat)
-        await champ_link.click()
-
-        try:
-            champions = await asyncio.wait_for(cat_future, timeout=15.0)
-        except Exception as exc:
-            logger.warning(f"cat.php intercept failed: {exc}")
-        finally:
-            page.remove_listener("response", on_cat)
-
-        await page.wait_for_timeout(400)
+        champs = await page.evaluate("""
+            () => Array.from(
+                document.querySelectorAll('.card-list li[data-id]')
+            ).map(li => {
+                const style = li.querySelector('.imgcont')?.getAttribute('style') || '';
+                const m = style.match(/background-color:\\s*#([0-9a-fA-F]{6})/i);
+                return {
+                    id:           li.dataset.id,
+                    en_name:      (li.querySelector('p.name')?.textContent || '').trim(),
+                    border_color: m ? m[1].toUpperCase() : ''
+                };
+            })
+        """)
 
         self._color_by_name = {}
         self._mythic_champs = []
 
-        for c in champions:
-            name  = (c.get("en_name") or "").strip()
-            color = (c.get("border_color") or "").upper()
+        for c in champs:
+            name  = c.get("en_name", "").strip()
+            color = c.get("border_color", "")
             if name:
                 self._color_by_name[name.lower()] = color
             if name and _is_red(color):
-                self._mythic_champs.append((int(c["id"]), name))
+                try:
+                    self._mythic_champs.append((int(c["id"]), name))
+                except (ValueError, KeyError):
+                    pass
 
         logger.info(
-            f"cat.php: {len(champions)} champions, "
+            f"DOM: {len(champs)} champions loaded, "
             f"{len(self._mythic_champs)} mythic"
         )
 

@@ -116,6 +116,60 @@ def make_rsl_game_handler(hero_level: str, myth_level: str):
     return handler
 
 
+async def _publish_account(
+    account_id: str,
+    detail_url: str,
+    price: float,
+    g2g: G2GBot,
+    published: dict,
+    first_lot: bool,
+) -> bool:
+    """Publish one account to G2G. Returns updated first_lot flag."""
+    try:
+        acc = await fetch_detail(account_id, detail_url, price)
+        if acc is None:
+            logger.error(f"Could not load data for {account_id} — skip")
+            return first_lot
+
+        title = format_title(acc)
+        description = format_description(acc)
+        hero_level = get_hero_level(len(acc.legendary_champions))
+        myth_level = get_myth_level(len(acc.mythic_champions))
+
+        ok = await g2g.create_lot(
+            title=title,
+            description=description,
+            price=f"{price:.2f}",
+            brief_description=format_title(acc),
+            hero_level=hero_level,
+            myth_level=myth_level,
+            photos=None,
+            first_lot=first_lot,
+            funpay_id=account_id,
+            funpay_url=detail_url,
+            game=GAME,
+            game_handler=make_rsl_game_handler(hero_level, myth_level),
+            funpay_price=price,
+        )
+
+        if ok:
+            lot_id = get_g2g_id_from_lot_pairs(account_id)
+            if lot_id:
+                published[account_id] = lot_id
+                save_published(published)
+                logger.info(f"✓ {account_id} → lot {lot_id}  ${price:.2f}")
+            else:
+                logger.warning(f"✓ Published {account_id} but lot ID not found yet")
+            return False  # first_lot = False after first success
+        else:
+            logger.error(f"✗ Failed to publish {account_id}")
+            return True  # reset first_lot on failure
+
+    except Exception as exc:
+        logger.error(f"Error publishing {account_id}: {exc}", exc_info=True)
+        return True
+
+
 async def run_cycle(
     config: dict,
     g2g: G2GBot,
@@ -124,79 +178,64 @@ async def run_cycle(
 ) -> bool:
     logger.info("=== Scan cycle ===")
 
+    lots_per_champion = config.get("lots_per_champion", 10)
+    max_champions    = config.get("max_champions", 20)
+
+    # Navigate once and build rarity map
     try:
-        all_current = await fetch_raidcheap_list(scraper)
+        await scraper.setup_page()
+        champion_count = await scraper.get_champion_count()
     except Exception as exc:
-        logger.error(f"Failed to fetch account list: {exc}")
+        logger.error(f"Failed to init scraper: {exc}")
         return first_lot
 
-    if not all_current:
-        logger.warning("No accounts found on raid-cheap.com")
-        return first_lot
-
-    all_current.sort(key=lambda x: x[2])
     logger.info(
-        f"Live: {len(all_current)} accounts | "
-        f"Cheapest: ${all_current[0][2]:.2f}"
+        f"Champions on page: {champion_count} | "
+        f"checking first {min(champion_count, max_champions)} | "
+        f"up to {lots_per_champion} lots each"
     )
 
-    current_ids = {t[0] for t in all_current}
-    published = load_published()
-    published_ids = set(published.keys())
+    published    = load_published()
+    all_seen_ids: set[str] = set()
 
-    new_ids = current_ids - published_ids
-    removed_ids = published_ids - current_ids
-    logger.info(f"New: {len(new_ids)}  |  Removed: {len(removed_ids)}")
-
-    new_sorted = [t for t in all_current if t[0] in new_ids]
-    for account_id, detail_url, price in new_sorted:
-        logger.info(f"Publishing {account_id}  ${price:.2f} …")
+    for champ_idx in range(min(champion_count, max_champions)):
         try:
-            acc = await fetch_detail(account_id, detail_url, price)
-            if acc is None:
-                logger.error(f"Could not load data for {account_id} — skip")
-                continue
+            accounts, champ_name = await scraper.fetch_for_champion(champ_idx)
+        except Exception as exc:
+            logger.error(f"Champion [{champ_idx}]: fetch failed — {exc}")
+            continue
 
-            title = format_title(acc)
-            description = format_description(acc)
-            hero_level = get_hero_level(len(acc.legendary_champions))
-            myth_level = get_myth_level(len(acc.mythic_champions))
+        if not accounts:
+            continue
 
-            ok = await g2g.create_lot(
-                title=title,
-                description=description,
-                price=f"{price:.2f}",
-                brief_description=format_title(acc),
-                hero_level=hero_level,
-                myth_level=myth_level,
-                photos=None,
-                first_lot=first_lot,
-                funpay_id=account_id,
-                funpay_url=detail_url,
-                game=GAME,
-                game_handler=make_rsl_game_handler(hero_level, myth_level),
-                funpay_price=price,
+        for aid, _, _ in accounts:
+            all_seen_ids.add(aid)
+
+        new_accounts = [
+            (aid, url, price) for aid, url, price in accounts
+            if aid not in published
+        ]
+        new_accounts.sort(key=lambda x: x[2])
+
+        if not new_accounts:
+            logger.info(f"[{champ_name}]: no new accounts")
+            continue
+
+        to_publish = new_accounts[:lots_per_champion]
+        logger.info(
+            f"[{champ_name}]: {len(new_accounts)} new — "
+            f"publishing {len(to_publish)}"
+        )
+
+        for account_id, detail_url, price in to_publish:
+            logger.info(f"  Publishing {account_id}  ${price:.2f} …")
+            first_lot = await _publish_account(
+                account_id, detail_url, price, g2g, published, first_lot
             )
 
-            if ok:
-                lot_id = get_g2g_id_from_lot_pairs(account_id)
-                if lot_id:
-                    published[account_id] = lot_id
-                    save_published(published)
-                    logger.info(f"✓ {account_id} → lot {lot_id}  ${price:.2f}")
-                else:
-                    logger.warning(
-                        f"✓ Published {account_id} but lot ID not found in "
-                        f"lot_pairs.json yet"
-                    )
-                first_lot = False
-            else:
-                logger.error(f"✗ Failed to publish {account_id}")
-                first_lot = True
-
-        except Exception as exc:
-            logger.error(f"Error publishing {account_id}: {exc}", exc_info=True)
-            first_lot = True
+    # Remove lots whose accounts are no longer on the site
+    removed_ids = set(published.keys()) - all_seen_ids
+    logger.info(f"Removed from site: {len(removed_ids)}")
 
     for account_id in list(removed_ids):
         lot_id = published.get(account_id)

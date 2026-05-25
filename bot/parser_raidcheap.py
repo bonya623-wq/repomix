@@ -170,53 +170,51 @@ class RaidCheapScraper:
             f"({mythic_count} mythic, {leg_count} legendary)"
         )
 
-    # ── Step 2: click first champion + Search, collect rows ──────────────
+    # ── Step 2: click champion by index + Search, collect rows ───────────
 
-    async def _fetch_accounts_for_first_champion(self) -> list[dict]:
+    async def _fetch_accounts_for_champion(self, champion_idx: int = 0) -> tuple[list[dict], str]:
         """
-        Click the first champion card, click Search, wait for results,
-        return list of raw row dicts.
+        Click the champion card at given index, click Search, wait for results.
+        Returns (rows, champion_name).
         """
         page = self._page
 
-        # Click first card
-        first_card = await page.query_selector(".card-list li[data-id]")
-        if not first_card:
+        cards = await page.query_selector_all(".card-list li[data-id]")
+        if not cards:
             logger.error("No champion cards found in .card-list")
-            return []
+            return [], ""
+        if champion_idx >= len(cards):
+            return [], ""
 
+        card = cards[champion_idx]
         champ_name = await page.evaluate(
             "(li) => (li.querySelector('p.name')?.textContent || '').trim()",
-            first_card,
+            card,
         )
-        await first_card.click()
-        logger.info(f"Clicked champion: {champ_name}")
+        await card.click()
+        logger.info(f"Clicked champion [{champion_idx}]: {champ_name}")
         await asyncio.sleep(0.5)
 
-        # Click Search button
         search_btn = await page.query_selector("button.search-btn")
         if not search_btn:
             logger.error("Search button not found")
-            return []
+            return [], champ_name
         await search_btn.click()
-        logger.info("Search clicked — waiting for results…")
+        logger.info(f"Search clicked — waiting for results ({champ_name})…")
 
-        # Wait for at least one result row
         try:
-            await page.wait_for_selector(
-                "ul.tbody-tr",
-                timeout=30_000,
-            )
+            await page.wait_for_selector("ul.tbody-tr", timeout=30_000)
         except Exception:
-            # Fallback: give the page more time and try scraping anyway
             await asyncio.sleep(5)
 
-        # Let all pages load (site uses AJAX append)
         await asyncio.sleep(3)
 
-        # Extract rows
         rows = await self._extract_rows()
-        logger.info(f"Extracted {len(rows)} account rows")
+        logger.info(f"{champ_name}: extracted {len(rows)} account rows")
+        return rows, champ_name
+
+    async def _fetch_accounts_for_first_champion(self) -> list[dict]:
+        rows, _ = await self._fetch_accounts_for_champion(0)
         return rows
 
     # ── Step 3: extract rows from DOM ────────────────────────────────────
@@ -328,22 +326,51 @@ class RaidCheapScraper:
 
     # ── Public API ────────────────────────────────────────────────────────
 
+    async def setup_page(self) -> None:
+        """Navigate to raidmmo.com and build rarity map. Call once per cycle."""
+        global _ACCOUNT_CACHE
+        _ACCOUNT_CACHE = {}
+        logger.info(f"Navigating to {BASE_URL} …")
+        await self._page.goto(BASE_URL, wait_until="networkidle", timeout=30_000)
+        await self._load_rarity_map()
+
+    async def get_champion_count(self) -> int:
+        """Return total number of champion cards in .card-list."""
+        cards = await self._page.query_selector_all(".card-list li[data-id]")
+        return len(cards)
+
+    async def fetch_for_champion(self, champion_idx: int) -> tuple[list[tuple[str, str, float]], str]:
+        """
+        Fetch accounts for champion at given index (requires setup_page() first).
+        Returns ([(account_id, url, price_usd), ...], champion_name).
+        """
+        rows, champ_name = await self._fetch_accounts_for_champion(champion_idx)
+        if not champ_name:
+            return [], ""
+
+        result: list[tuple[str, str, float]] = []
+        seen_nicks: set[str] = set()
+
+        for row in rows:
+            nickname = row.get("nickname", "")
+            if not nickname or nickname in seen_nicks:
+                continue
+            seen_nicks.add(nickname)
+            acc = self._build_account(row)
+            if acc.price_usd <= 0:
+                continue
+            _ACCOUNT_CACHE[acc.account_id] = acc
+            result.append((acc.account_id, f"{BASE_URL}/{nickname}", acc.price_usd))
+
+        result.sort(key=lambda x: x[2])
+        return result, champ_name
+
     async def fetch_listing(self) -> list[tuple[str, str, float]]:
         """
         Navigate to raidmmo.com, build rarity map, click first champion,
-        search, collect all accounts.
-
-        Returns list of (account_id, url, price_usd) sorted cheapest first.
-        Populates _ACCOUNT_CACHE for fetch_raidcheap_account().
+        search, collect all accounts. Kept for backward compatibility.
         """
-        global _ACCOUNT_CACHE
-        _ACCOUNT_CACHE = {}
-
-        logger.info(f"Navigating to {BASE_URL} …")
-        await self._page.goto(BASE_URL, wait_until="networkidle", timeout=30_000)
-
-        await self._load_rarity_map()
-
+        await self.setup_page()
         rows = await self._fetch_accounts_for_first_champion()
 
         result: list[tuple[str, str, float]] = []
@@ -354,11 +381,9 @@ class RaidCheapScraper:
             if not nickname or nickname in seen_nicks:
                 continue
             seen_nicks.add(nickname)
-
             acc = self._build_account(row)
             if acc.price_usd <= 0:
                 continue
-
             _ACCOUNT_CACHE[acc.account_id] = acc
             result.append((acc.account_id, f"{BASE_URL}/{nickname}", acc.price_usd))
 

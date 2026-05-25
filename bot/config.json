@@ -2,6 +2,8 @@
   "headless": false,
   "check_interval_minutes": 10,
   "browser_profile_dir": "./browser_profile",
+  "lots_per_champion": 10,
+  "max_champions": 20,
   "proxy": {
     "server": "",
     "username": "",

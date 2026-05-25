@@ -1,8 +1,8 @@
 """
-Parser for https://raid-cheap.com
+Parser for https://www.raidmmo.com
 
 Uses Playwright to visually click champion cards and Search,
-while intercepting the site's go.php JSON API responses for data.
+intercepting the site's go.php JSON API responses for data extraction.
 
 Flow for each mythic champion:
   1. Click the champion card in .card-list  (li[data-id=ID])
@@ -10,8 +10,10 @@ Flow for each mythic champion:
   3. Site auto-loads all result pages via search_append() AJAX
   4. We intercept every /go.php response to build the account list
 
-Champion catalogue loaded via cat.php at the start of each scan.
-Price field in go.php is CNY.  USD = price × 0.165  (site's own rate).
+Champion catalogue loaded by clicking the Champions tab and intercepting
+the cat.php AJAX response — works regardless of category IDs used by the site.
+
+Price field in go.php is in USD (raidmmo.com stores prices in USD).
 """
 
 import asyncio
@@ -27,24 +29,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-BASE_URL    = "https://www.raidmmo.com"
-CATEGORY_ID = "51"          # RSL Champions tab in cat.php
-
-CNY_TO_USD  = 0.165
-
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    ),
-    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-}
+BASE_URL = "https://www.raidmmo.com"
 
 _ACCOUNT_CACHE: dict[str, AccountData] = {}
 
 
 # ---------------------------------------------------------------------------
-# Colour helpers
+# Colour helpers  (border_color from cat.php)
 # ---------------------------------------------------------------------------
 
 def _is_red(hex6: str) -> bool:
@@ -69,8 +60,8 @@ def _is_gold(hex6: str) -> bool:
 
 class RaidCheapScraper:
     """
-    Opens a browser tab on raid-cheap.com, clicks mythic champion cards,
-    clicks Search, and captures the go.php JSON responses.
+    Opens a browser tab on raidmmo.com, clicks mythic champion cards,
+    clicks Search, and captures go.php JSON responses.
     """
 
     def __init__(self, context: "BrowserContext") -> None:
@@ -93,24 +84,21 @@ class RaidCheapScraper:
     async def _load_champions(self) -> None:
         """
         Click the Champions nav tab and intercept the cat.php AJAX response.
-        Works regardless of category/game IDs used by the specific site.
+        Populates _color_by_name (en_name → border_color) and _mythic_champs.
         """
         page = self._page
         champions: list[dict] = []
 
-        # Find the "Champions" tab by text content
         champ_link = await page.query_selector(
             ".top-nav a:has-text('Champion'), .top-nav a:has-text('champion')"
         )
         if not champ_link:
-            # Fall back to the first nav link
             champ_link = await page.query_selector(".top-nav li > a")
 
         if champ_link is None:
-            logger.error("Cannot find Champions nav tab — aborting champion load")
+            logger.error("Cannot find Champions nav tab")
             return
 
-        # Intercept the cat.php response triggered by the click
         cat_future: asyncio.Future = asyncio.get_event_loop().create_future()
 
         async def on_cat(response: Response) -> None:
@@ -163,14 +151,12 @@ class RaidCheapScraper:
         page  = self._page
         found: dict[str, dict] = {}
 
-        # Clear previous selection
         try:
             await page.click("button.clear-btn", timeout=4_000)
             await page.wait_for_timeout(400)
         except Exception:
             pass
 
-        # Find the champion card and click it
         card = await page.query_selector(f".card-list li[data-id='{champ_id}']")
         if not card:
             logger.warning(f"Card not found for {champ_name} (id={champ_id})")
@@ -180,7 +166,6 @@ class RaidCheapScraper:
         await card.click()
         await page.wait_for_timeout(400)
 
-        # Intercept go.php responses (the site calls it for every page automatically)
         collected: list[dict] = []
         total_pages: list[int] = [1]
 
@@ -202,7 +187,6 @@ class RaidCheapScraper:
 
         page.on("response", on_response)
 
-        # Click Search — triggers AJAX + recursive search_append()
         try:
             await page.click("button.search-btn", timeout=5_000)
         except Exception as e:
@@ -210,16 +194,14 @@ class RaidCheapScraper:
             page.remove_listener("response", on_response)
             return found
 
-        # Wait until all pages arrive (search_append auto-paginates, max 60 s)
         for _ in range(120):
             await asyncio.sleep(0.5)
             if len(collected) >= total_pages[0]:
-                await asyncio.sleep(0.8)   # buffer for the very last request
+                await asyncio.sleep(0.8)
                 break
 
         page.remove_listener("response", on_response)
 
-        # Extract account items from all collected pages
         for raw in collected:
             if isinstance(raw, dict):
                 items = [v for v in raw.values() if isinstance(v, dict) and "account" in v]
@@ -275,7 +257,7 @@ class RaidCheapScraper:
 
     async def fetch_listing(self) -> list[tuple[str, str, float]]:
         """
-        Navigate to the site, click every mythic champion, collect accounts.
+        Navigate to raidmmo.com, click every mythic champion, collect accounts.
         Returns (account_id, url, price_usd) sorted cheapest first.
         Populates _ACCOUNT_CACHE for fetch_raidcheap_account().
         """
@@ -285,7 +267,6 @@ class RaidCheapScraper:
         logger.info(f"Navigating to {BASE_URL} …")
         await self._page.goto(BASE_URL, wait_until="networkidle", timeout=30_000)
 
-        # _load_champions clicks the Champions tab which also refreshes card-list
         await self._load_champions()
 
         all_raw: dict[str, dict] = {}
@@ -295,25 +276,23 @@ class RaidCheapScraper:
             batch = await self._search_one_mythic(champ_id, champ_name)
             new = sum(1 for k in batch if k not in all_raw)
             all_raw.update({k: v for k, v in batch.items() if k not in all_raw})
-            logger.info(
-                f"  → +{new} new  (total unique: {len(all_raw)})"
-            )
+            logger.info(f"  → +{new} new  (total unique: {len(all_raw)})")
 
         result: list[tuple[str, str, float]] = []
 
         for acc_name, item in all_raw.items():
-            price_cny = float(item.get("price", 0) or 0)
-            usd_price = round(price_cny * CNY_TO_USD, 2)
-            if usd_price <= 0:
+            # raidmmo.com stores prices in USD
+            price_usd = round(float(item.get("price", 0) or 0), 2)
+            if price_usd <= 0:
                 continue
             acc_id   = f"rc_{acc_name}"
             url      = f"{BASE_URL}/{acc_name}"
-            acc_data = self._build_account_data(acc_id, usd_price, item)
+            acc_data = self._build_account_data(acc_id, price_usd, item)
             _ACCOUNT_CACHE[acc_id] = acc_data
-            result.append((acc_id, url, usd_price))
+            result.append((acc_id, url, price_usd))
 
         result.sort(key=lambda x: x[2])
-        logger.info(f"raid-cheap.com: {len(result)} unique accounts")
+        logger.info(f"raidmmo.com: {len(result)} unique accounts")
         return result
 
 

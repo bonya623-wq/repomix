@@ -1,0 +1,10 @@
+{
+  "headless": false,
+  "check_interval_minutes": 10,
+  "browser_profile_dir": "./browser_profile",
+  "proxy": {
+    "server": "",
+    "username": "",
+    "password": ""
+  }
+}

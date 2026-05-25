@@ -84,16 +84,13 @@ def remove_from_lot_pairs(funpay_id: str) -> None:
 
 
 def get_hero_level(legendary_count: int) -> str:
+    # Values must match G2G dropdown exactly: 300+, 250+, 200+, 100+, 50+, 10+, 9 or below
     if legendary_count >= 300: return "300+"
     if legendary_count >= 250: return "250+"
     if legendary_count >= 200: return "200+"
-    if legendary_count >= 150: return "150+"
     if legendary_count >= 100: return "100+"
-    if legendary_count >= 80:  return "80+"
     if legendary_count >= 50:  return "50+"
-    if legendary_count >= 30:  return "30+"
-    if legendary_count >= 20:  return "20+"
-    if legendary_count >= 10:  return "10"
+    if legendary_count >= 10:  return "10+"
     return "9 or below"
 
 

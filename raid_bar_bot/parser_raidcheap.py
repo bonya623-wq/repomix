@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-BASE_URL    = "https://raid-cheap.com"
+BASE_URL    = "https://www.raidmmo.com"
 CATEGORY_ID = "51"          # RSL Champions tab in cat.php
 
 CNY_TO_USD  = 0.165
@@ -92,10 +92,14 @@ class RaidCheapScraper:
     # ── Champion catalogue ─────────────────────────────────────────────────────
 
     async def _load_champions(self) -> None:
-        """Fetch RSL champion list from cat.php (httpx — fast, no session needed)."""
+        """Fetch champion list from cat.php using the active tab's category ID."""
+        # Read category ID from the active nav tab on the page (avoids hardcoding)
+        cat_id = await self._page.evaluate(
+            "() => document.querySelector('.top-nav a.current')?.dataset?.id || '51'"
+        )
         async with httpx.AsyncClient(headers=HEADERS, follow_redirects=True) as client:
             resp = await client.get(
-                f"{BASE_URL}/cat.php", params={"id": CATEGORY_ID}, timeout=20
+                f"{BASE_URL}/cat.php", params={"id": cat_id}, timeout=20
             )
             resp.raise_for_status()
             champions = resp.json().get("data", [])
@@ -251,13 +255,13 @@ class RaidCheapScraper:
         logger.info("Navigating to raid-cheap.com …")
         await self._page.goto(BASE_URL, wait_until="networkidle", timeout=30_000)
 
-        # Static page HTML may have an outdated card list — click the Champions
-        # tab to trigger the cat.php AJAX reload and get all current champions.
+        # Static page HTML may have stale cards — click the active Champions tab
+        # to trigger cat.php AJAX reload and get the full current champion list.
         try:
             async with self._page.expect_response(
                 lambda r: "cat.php" in r.url, timeout=10_000
             ):
-                await self._page.click(".top-nav a[data-id='51']", timeout=5_000)
+                await self._page.click(".top-nav a.current", timeout=5_000)
             await self._page.wait_for_timeout(600)
             logger.debug("Card list refreshed via Champions tab click")
         except Exception as e:

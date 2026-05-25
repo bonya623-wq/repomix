@@ -2106,6 +2106,10 @@ class G2GBot:
             pass
         await btns[btn_index].click()
 
+        # Short pause so the dropdown animation starts and old DOM items clear
+        await asyncio.sleep(0.5)
+
+        # Wait for fresh items to appear in the newly opened dropdown
         try:
             await page.wait_for_selector(".q-virtual-scroll__content .q-item", timeout=8_000)
         except Exception:
@@ -2113,7 +2117,8 @@ class G2GBot:
 
         for item in await page.query_selector_all(".q-virtual-scroll__content .q-item"):
             if (await item.inner_text()).strip().lower() == value.lower():
-                await item.click()
+                # Use JS click to bypass q-virtual-scroll pointer-events interception
+                await page.evaluate("el => el.click()", item)
                 await asyncio.sleep(0.5)
                 logger.info(f"G2G: дропдаун {btn_index} -> '{value}' OK")
                 return

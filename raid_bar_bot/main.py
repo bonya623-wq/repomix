@@ -14,6 +14,7 @@ import argparse
 import asyncio
 import json
 import logging
+import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
@@ -322,6 +323,22 @@ async def main() -> None:
 
     profile_dir = config.get("browser_profile_dir", "./browser_profile")
     headless    = config.get("headless", False)
+
+    # On Windows, Chrome holds a process mutex on the profile — file locks alone
+    # are not enough. Kill any existing chrome.exe using this profile dir first.
+    if sys.platform == "win32":
+        profile_abs = str(Path(profile_dir).resolve())
+        try:
+            result = subprocess.run(
+                ["wmic", "process", "where",
+                 f"name='chrome.exe' and commandline like '%{profile_abs}%'",
+                 "delete"],
+                capture_output=True, timeout=10,
+            )
+            logger.debug(f"Chrome kill result: {result.returncode}")
+        except Exception as e:
+            logger.warning(f"Could not kill Chrome processes: {e}")
+        await asyncio.sleep(1)
 
     for lock_name in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
         lock = Path(profile_dir) / lock_name

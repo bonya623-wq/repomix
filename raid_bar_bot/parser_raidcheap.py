@@ -152,12 +152,14 @@ class RaidCheapScraper:
         await card.click()
         await page.wait_for_timeout(400)
 
-        collected: list[dict] = []
-        total_pages: list[int] = [1]
+        collected:          list[dict] = []
+        total_pages:        list[int]   = [1]
+        last_response_at:   list[float] = [0.0]
 
         async def on_response(response: Response) -> None:
             if "/go.php" not in response.url:
                 return
+            last_response_at[0] = asyncio.get_event_loop().time()
             try:
                 data = await response.json()
             except Exception:
@@ -180,10 +182,22 @@ class RaidCheapScraper:
             page.remove_listener("response", on_response)
             return found
 
+        start = asyncio.get_event_loop().time()
         for _ in range(120):
             await asyncio.sleep(0.5)
-            if len(collected) >= total_pages[0]:
-                await asyncio.sleep(0.8)
+            now = asyncio.get_event_loop().time()
+
+            # All expected pages arrived
+            if len(collected) >= total_pages[0] and last_response_at[0] > 0:
+                await asyncio.sleep(0.5)
+                break
+
+            # Got a response but nothing more for 3 s → done
+            if last_response_at[0] > 0 and (now - last_response_at[0]) > 3.0:
+                break
+
+            # No response at all within 10 s → probably no results
+            if last_response_at[0] == 0 and (now - start) > 10.0:
                 break
 
         page.remove_listener("response", on_response)

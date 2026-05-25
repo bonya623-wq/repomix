@@ -1,5 +1,7 @@
 """
-Raid Shadow Legends (raidmmo.com) → G2G publishing bot.
+Raid Cheap → G2G publishing bot.
+
+Source: raid-cheap.com only (Chinese RSL account marketplace).
 
 Usage:
   python main.py               # continuous loop
@@ -23,7 +25,6 @@ from formatter import format_description, format_title
 from g2g_bot import G2GBot, load_lot_pairs, _save_pairs_atomic
 from parser_raidcheap import RaidCheapScraper, fetch_raidcheap_list
 from parser_raidcheap import fetch_raidcheap_account as fetch_detail
-import games.raid as raid_game
 
 PUBLISHED_FILE = Path("published_ids.json")
 CONFIG_FILE = Path("config.json")
@@ -31,18 +32,12 @@ GAME = "Raid: Shadow Legends"
 
 logger = logging.getLogger(__name__)
 
-# Дропдауны RSL на G2G (индексы соответствуют порядку кнопок на странице)
-RAID_DROPDOWNS = [
+# Dropdown indices for RSL on G2G (order matches buttons on the page)
+_RSL_DROPDOWNS = [
     {"index": 0, "value": "Android"},
     {"index": 1, "value": "{hero_level}"},
     {"index": 2, "value": "{myth_level}"},
 ]
-
-# Конфиг игры (передаётся в raid_game.fill_form)
-RAID_GAME_CFG = {
-    "name": GAME,
-    "g2g_dropdowns": RAID_DROPDOWNS,
-}
 
 
 def _setup_logging(debug: bool) -> None:
@@ -109,24 +104,17 @@ def get_myth_level(mythic_count: int) -> str:
 
 
 def make_rsl_game_handler(hero_level: str, myth_level: str):
-    """
-    Game handler для RSL: заполняет дропдауны Android / hero_level / myth_level.
-
-    Логика взята из games/raid.py — индексированные дропдауны из конфига.
-    _select_dropdown ждёт появления кнопок перед кликом (исправление ошибки
-    "не может найти кнопки").
-    """
-    game_cfg = dict(RAID_GAME_CFG)
-
+    """Fill RSL dropdowns by explicit index (Android / hero_level / myth_level)."""
     async def handler(page, bot):
-        return await raid_game.fill_form(
-            page=page,
-            g2g_bot=bot,
-            game_cfg=game_cfg,
-            lot=None,
-            hero_level=hero_level,
-            myth_level=myth_level,
-        )
+        for dd in _RSL_DROPDOWNS:
+            idx = dd["index"]
+            val = dd["value"]
+            if val == "{hero_level}":
+                val = hero_level
+            elif val == "{myth_level}":
+                val = myth_level
+            await bot._select_dropdown(page, idx, val)
+        return True
 
     return handler
 
@@ -146,7 +134,7 @@ async def run_cycle(
         return first_lot
 
     if not all_current:
-        logger.warning("No accounts found on raidmmo.com")
+        logger.warning("No accounts found on raid-cheap.com")
         return first_lot
 
     all_current.sort(key=lambda x: x[2])
@@ -240,7 +228,7 @@ async def run_cycle(
 
 
 async def main() -> None:
-    ap = argparse.ArgumentParser(description="RaidMMO → G2G bot")
+    ap = argparse.ArgumentParser(description="Raid Cheap → G2G bot")
     ap.add_argument("--once", action="store_true", help="Single cycle then exit")
     ap.add_argument("--parse-only", action="store_true", help="Print accounts, no posting")
     ap.add_argument("--debug", action="store_true", help="Verbose logging")
@@ -324,7 +312,7 @@ async def main() -> None:
                 logger.info("G2G: not logged in — open the browser and log in manually")
                 await g2g.wait_for_manual_login()
 
-            logger.info("Bot ready. Monitoring raidmmo.com …")
+            logger.info("Bot ready. Monitoring raid-cheap.com …")
             first_lot = True
 
             if args.once:

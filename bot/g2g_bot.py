@@ -2084,19 +2084,15 @@ class G2GBot:
         return False
 
     async def _select_dropdown(self, page: Page, btn_index: int, value: str):
-        # Wait for dropdown buttons to be rendered before querying
+        # Wait for buttons to be rendered before querying
         try:
             await page.wait_for_selector("button.g-btn-select", timeout=10_000)
         except Exception:
             logger.warning(f"G2G: кнопки g-btn-select не появились за 10с (индекс {btn_index})")
 
         btns = await page.query_selector_all("button.g-btn-select")
-
-        # Fallback selectors if primary returns nothing
         if not btns:
             btns = await page.query_selector_all("button[class*='btn-select']")
-        if not btns:
-            btns = await page.query_selector_all(".g-btn-select")
 
         logger.info(f"G2G: _select_dropdown idx={btn_index} val='{value}' — найдено {len(btns)} кнопок")
 
@@ -2110,12 +2106,8 @@ class G2GBot:
             pass
         await btns[btn_index].click()
 
-        # Wait for dropdown items to appear
         try:
-            await page.wait_for_selector(
-                ".q-virtual-scroll__content .q-item",
-                timeout=8_000,
-            )
+            await page.wait_for_selector(".q-virtual-scroll__content .q-item", timeout=8_000)
         except Exception:
             await asyncio.sleep(1.5)
 
@@ -2127,7 +2119,6 @@ class G2GBot:
                 return
 
         logger.warning(f"G2G: дропдаун {btn_index} - не нашли '{value}'")
-        # Close dropdown if item not found
         await page.keyboard.press("Escape")
         await asyncio.sleep(0.3)
 
